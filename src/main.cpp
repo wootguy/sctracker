@@ -8,6 +8,7 @@
 #include <thread>
 #include <chrono>
 #include <stdio.h>
+#include <algorithm>
 
 using namespace std;
 using namespace rapidjson;
@@ -21,15 +22,27 @@ string appid = "225840"; // Sven Co-op
 string filter = "\\appid\\" + appid;
 string statsPath = "stats/";
 string archivePath = "stats/archive/";
+string rankPath = "rankings.txt"; // ordered list of server IDs by rank
+
+//#define DEBUG_MODE
+
+#ifdef DEBUG_MODE
+	#define SERVER_DEAD_SECONDS (60)
+	#define SERVER_UNREACHABLE_TIME (30)
+	#define STAT_WRITE_FREQ 10
+	#define RANK_FREQ 20
+#else
+	#define SERVER_DEAD_SECONDS (60*60*24*7) // seconds before a server is considered "dead" and its stats are archived
+	#define SERVER_UNREACHABLE_TIME (60*5) // write unreachable stat after this time
+	#define STAT_WRITE_FREQ 60 // how often to write stats
+	#define RANK_FREQ 60*60 // How often to compute server rankings
+#endif
 
 #define STAT_FILE_VERSION 1
-//#define SERVER_DEAD_SECONDS (60*60*24*7) // seconds before a server is considered "dead" and its stats are archived
-//#define SERVER_UNREACHABLE_TIME (60*5) // write unreachable stat after this time
-//#define STAT_WRITE_FREQ 60 // how often to write stats
+#define RANK_STAT_MAX_AGE 60*60*24*14 // ignore stats older than this when computing ranks
+#define RANK_STAT_INTERVAL 60 // gaps between rank data points
+#define TOTAL_RANK_DATA_POINTS ((RANK_STAT_MAX_AGE) / (RANK_STAT_INTERVAL))
 
-#define SERVER_DEAD_SECONDS (60)
-#define SERVER_UNREACHABLE_TIME (30)
-#define STAT_WRITE_FREQ 10
 
 #pragma pack(push, 1)
 struct StatFileHeader {
@@ -55,6 +68,7 @@ struct ServerState {
 
 	uint32_t lastWriteTime; // last time a player count stat was written (epoch seconds)
 	uint32_t lastResponseTime; // last time data was received for this server
+	uint32_t rankSum; // sum of player counts over rankDataPoints data points
 	
 	string getStatFilePath();
 	string getStatArchiveFilePath();
@@ -75,6 +89,7 @@ void ServerState::init() {
 struct WriteStats {
 	int bytesWritten = 0;
 	int serversUpdated = 0;
+	int bytesRead = 0;
 };
 
 WriteStats g_writeStats;
@@ -82,7 +97,7 @@ map<string, ServerState> g_servers;
 
 bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, uint32_t now);
 bool createServerStatFile(ServerState& newState);
-bool loadServerHistory(ServerState& state);
+bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted);
 void updateStats(Value& serverList);
 bool validateStatName(string name);
 bool parseServerJson(Value& json, ServerState& state);
@@ -166,7 +181,7 @@ bool parseServerJson(Value& json, ServerState& state) {
 }
 
 // false indicates a problem with the file
-bool loadServerHistory(ServerState& state) {
+bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) {
 	string fpath = state.getStatFilePath();
 	string archivePath = state.getStatArchiveFilePath();
 
@@ -227,15 +242,21 @@ bool loadServerHistory(ServerState& state) {
 	string dispName = state.displayName();
 	//printf("History for %s\n", dispName.c_str());
 
+	uint32_t rankStartTime = now - RANK_STAT_MAX_AGE;
+	uint32_t nextRankTime = rankStartTime;
+	state.rankSum = 0;
+	uint32_t rankDataPoints = 0;
+
 	while (1) {
 		uint8_t stat;
 		if (!fread(&stat, sizeof(uint8_t), 1, file)) {
 			break;
 		}
 		uint8_t flags = stat & PCNT_FL_MASK;
+		uint8_t newPlayerCount = 0;
 
 		if ((stat & PCNT_FL_MASK) == PCNT_UNREACHABLE) {
-			state.players = 0;
+			newPlayerCount = 0;
 			state.unreachable = true;
 			flags = (stat << 2) & PCNT_FL_MASK;
 			if (stat & 0x0f) {
@@ -244,7 +265,7 @@ bool loadServerHistory(ServerState& state) {
 		}
 		else {
 			state.unreachable = false;
-			state.players = stat & ~PCNT_FL_MASK;
+			newPlayerCount = stat & ~PCNT_FL_MASK;
 			if (state.players > 32) {
 				printf("Invalid player count\n");
 			}
@@ -279,12 +300,35 @@ bool loadServerHistory(ServerState& state) {
 			dt = delta;
 		}
 
+		int backfills = 0;
+		while (state.lastWriteTime >= nextRankTime) { // back-fill gaps in data with last known player count
+			state.rankSum += state.players;
+			rankDataPoints++;
+			backfills++;
+			nextRankTime = rankStartTime + rankDataPoints * RANK_STAT_INTERVAL;
+		}
+
+		state.players = newPlayerCount;
+
 		//printf("Time %u, delta %d, count %d, unreachable %d\n", state.lastWriteTime, dt, (int)state.players, (int)state.unreachable);
 	}
 
-	fclose(file);
+	// now catch up to the current time
+	int backfills = 0;
+	while (now >= nextRankTime) { // back-fill gaps in data with last known player count
+		state.rankSum += state.players;
+		rankDataPoints++;
+		backfills++;
+		nextRankTime = rankStartTime + rankDataPoints * RANK_STAT_INTERVAL;
+	}
+	rankDataPoints--;
+	if (rankDataPoints != TOTAL_RANK_DATA_POINTS) {
+		state.rankSum = 0;
+		printf("Unexpected rank data points %u / %u\n", rankDataPoints, TOTAL_RANK_DATA_POINTS);
+	}
 
-	uint32_t now = getEpochSeconds();
+	g_writeStats.bytesRead += ftell(file);
+	fclose(file);
 
 	if (state.lastWriteTime > now) {
 		printf("Parsed invalid time +%u\n", state.lastWriteTime - now);
@@ -293,20 +337,18 @@ bool loadServerHistory(ServerState& state) {
 
 	state.lastResponseTime = state.lastWriteTime;
 
-
 	// write unreachable stat at the same time as the last stat,
 	// which will be when the program was stopped
 
 	uint32_t deadTime = state.secondsSinceLastResponse();
-	if (!state.unreachable && deadTime > SERVER_UNREACHABLE_TIME) {
+	if (programRestarted && !state.unreachable && deadTime > SERVER_UNREACHABLE_TIME) {
 		writeServerStat(state, 0, true, state.lastWriteTime);
-		state.lastWriteTime = 0; // force full time write next update
 		state.players = 0;
 		g_writeStats.serversUpdated -= 1;
-		printf("Loaded server state + append unreachable stat: %s\n", dispName.c_str());
+		printf("append unreachable stat: %s\n", dispName.c_str());
 	}
 	else {
-		printf("Loaded server state: %s\n", dispName.c_str());
+		//printf("Loaded server state: %s\n", dispName.c_str());
 	}
 
 	return true;
@@ -320,7 +362,7 @@ bool createServerStatFile(ServerState& newState) {
 	string archivePath = newState.getStatArchiveFilePath();
 	if (fileExists(fpath) || fileExists(archivePath)) {
 		printf("Stat file already exists: %s\n", dispName.c_str());
-		return loadServerHistory(newState);
+		return loadServerHistory(newState, getEpochMillis(), true);
 	}
 
 	FILE* file = fopen(fpath.c_str(), "wb");
@@ -369,7 +411,7 @@ bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, u
 		printf("Server is responding again (%.1f minutes): %s\n", unresponsiveDelta / 60.0f, dispName.c_str());
 	}
 	else if (state.players != 255 && !unreachable) {
-		printf("%d -> %d after %us: %s\n", state.players, newPlayerCount, writeTimeDelta, dispName.c_str());
+		//printf("%d -> %d after %us: %s\n", state.players, newPlayerCount, writeTimeDelta, dispName.c_str());
 	}
 
 	state.players = unreachable ? 0 : newPlayerCount;
@@ -563,8 +605,6 @@ void updateStats(Value& serverList) {
 			}
 		}
 	}
-
-	printf("Updated %d/%d servers, wrote %d bytes\n", g_writeStats.serversUpdated, (int)g_servers.size(), g_writeStats.bytesWritten);
 }
 
 bool validateStatName(string name) {
@@ -588,6 +628,67 @@ bool validateStatName(string name) {
 	}
 
 	return true;
+}
+
+bool compareByRank(const ServerState& a, const ServerState& b)
+{
+	return a.rankSum > b.rankSum;
+}
+
+void computeRanks() {
+	vector<string> statFiles = getDirFiles(statsPath, "dat", "");
+
+	uint32_t now = getEpochSeconds();
+
+	vector<ServerState> rankedServers;
+
+	for (string path : statFiles) {
+		string fname = path.substr(0, path.find_last_of("."));
+		if (!validateStatName(fname)) {
+			printf("Invalid stat file name: %s", fname.c_str());
+			continue;
+		}
+
+		ServerState state = ServerState();
+		state.init();
+		state.addr = fname;
+		if (g_servers.find(state.addr) != g_servers.end()) {
+			state.name = g_servers[state.addr].name;
+		}
+		if (!loadServerHistory(state, now, false)) {
+			g_servers.erase(fname);
+			printf("File corruption: %s", fname.c_str());
+			continue;
+		}
+		if (state.rankSum > 0)
+			rankedServers.push_back(state);
+	}
+
+	FILE* file = fopen(rankPath.c_str(), "w");
+	if (!file) {
+		printf("Failed to open rank file (%d): %s\n", errno, rankPath.c_str());
+		return;
+	}
+
+	std::sort(rankedServers.begin(), rankedServers.end(), compareByRank);
+
+	printf("Server ranks:\n");
+
+	string rankInfo = "rank_age=" + to_string(RANK_STAT_MAX_AGE) + "\nrank_freq=" + to_string(RANK_STAT_INTERVAL) + "\n";
+	fwrite(rankInfo.c_str(), rankInfo.size(), 1, file);
+
+	for (int i = 0; i < rankedServers.size(); i++) {
+		ServerState& serv = rankedServers[i];
+		if (i < 10) {
+			string dispName = serv.displayName();
+			float avg = serv.rankSum / (float)TOTAL_RANK_DATA_POINTS;
+			printf("%2d) %.2f = %s\n", i+1, avg, dispName.c_str());
+		}
+		string line = to_string(serv.rankSum) + "=" + serv.addr + "\n";
+		fwrite(line.c_str(), line.size(), 1, file);
+	}
+
+	fclose(file);
 }
 
 int main(int argc, char** argv) {
@@ -614,7 +715,7 @@ int main(int argc, char** argv) {
 		ServerState& state = g_servers[fname];
 		state.init();
 		state.addr = fname;
-		if (!loadServerHistory(state)) {
+		if (!loadServerHistory(state, getEpochSeconds(), true)) {
 			g_servers.erase(fname);
 			printf("File corruption: %s", fname.c_str());
 			return 0;
@@ -625,8 +726,13 @@ int main(int argc, char** argv) {
 	uint64_t writeCount = 1;
 	uint64_t startTime = (uint64_t)getEpochSeconds() * 1000ULL;
 	uint64_t nextWriteTime = startTime + ((uint64_t)(STAT_WRITE_FREQ * 1000) * writeCount);
+	uint32_t lastRankTime = 0;
+	uint64_t updateStartTime = getEpochMillis();
+
+	printf("Startup finished. Begin scanning\n\n");
 	
 	while (1) {
+		uint64_t fetchStartTime = getEpochMillis();
 		Document json;
 		Value& serverList = Value();
 		while (!getServerListJson(serverList, json)) {
@@ -634,21 +740,36 @@ int main(int argc, char** argv) {
 		}
 
 		uint64_t now = getEpochMillis();
+
+		printf("Server list fetched in %.1fs. Total update time: %.2fs\n\n", 
+			(now - fetchStartTime) / 1000.0f, (now - updateStartTime) / 1000.0f);
+		
+		now = getEpochMillis();
 		uint32_t waitTime = nextWriteTime - now;
 
 		if (nextWriteTime > now) {
-			printf("Server list fetched. Wait %.1fs\n", waitTime / 1000.0f);
+			printf("Next update in %.1fs\n", waitTime / 1000.0f);
 			this_thread::sleep_for(milliseconds(waitTime));
 		}
 
+		updateStartTime = getEpochMillis();
 		updateStats(serverList);
+
+		uint32_t nowSecs = getEpochSeconds();
+		if (nowSecs - lastRankTime > RANK_FREQ) {
+			lastRankTime = nowSecs;
+			uint64_t start = getEpochMillis();
+			g_writeStats.bytesRead = 0;
+			computeRanks();
+			printf("Computed ranks in %.2fs, %.1f MB read\n", (getEpochMillis() - start) / 1000.0f, g_writeStats.bytesRead / (1024.0f*1024.0f));
+		}
+
+		printf("Updated %d/%d servers, wrote %d bytes\n", g_writeStats.serversUpdated, (int)g_servers.size(), g_writeStats.bytesWritten);
 
 		do {
 			writeCount++;
 			nextWriteTime = startTime + ((uint64_t)(STAT_WRITE_FREQ*1000) * writeCount);
 		} while (nextWriteTime < now);
-
-		printf("\n");
 	}
 	
 
