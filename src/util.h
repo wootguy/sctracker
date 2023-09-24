@@ -20,3 +20,5 @@ uint64_t getEpochMillis();
 uint32_t getEpochSeconds();
 
 vector<string> getDirFiles(string path, string extension, string startswith);
+
+bool dirExists(const string& path);

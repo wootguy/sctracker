@@ -192,3 +192,14 @@ vector<string> getDirFiles(string path, string extension, string startswith)
 
 	return results;
 }
+
+bool dirExists(const string& path)
+{
+	struct stat info;
+
+	if (stat(path.c_str(), &info) != 0)
+		return false;
+	else if (info.st_mode & S_IFDIR)
+		return true;
+	return false;
+}
