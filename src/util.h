@@ -22,3 +22,5 @@ uint32_t getEpochSeconds();
 vector<string> getDirFiles(string path, string extension, string startswith);
 
 bool dirExists(const string& path);
+
+bool createDir(const string& path);

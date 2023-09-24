@@ -2,6 +2,7 @@
 #include <curl/curl.h>
 #include <fstream>
 #include <chrono>
+#include <algorithm>
 
 #if defined(WIN32) || defined(_WIN32)
 #include <Windows.h>
@@ -11,6 +12,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #define GetCurrentDir getcwd
 
 typedef char TCHAR;
@@ -154,8 +158,6 @@ vector<string> getDirFiles(string path, string extension, string startswith)
 		FindClose(hFind);
 	}
 #else
-	extension = toLowerCase(extension);
-	startswith = toLowerCase(startswith);
 	startswith.erase(std::remove(startswith.begin(), startswith.end(), '*'), startswith.end());
 	DIR* dir = opendir(path.c_str());
 
@@ -173,14 +175,13 @@ vector<string> getDirFiles(string path, string extension, string startswith)
 			continue;
 
 		string name = string(entry->d_name);
-		string lowerName = toLowerCase(name);
 
 		if (extension.size() > name.size() || startswith.size() > name.size())
 			continue;
 
-		if (extension == "*" || std::equal(extension.rbegin(), extension.rend(), lowerName.rbegin()))
+		if (extension == "*" || std::equal(extension.rbegin(), extension.rend(), name.rbegin()))
 		{
-			if (startswith.size() == 0 || std::equal(startswith.begin(), startswith.end(), lowerName.begin()))
+			if (startswith.size() == 0 || std::equal(startswith.begin(), startswith.end(), name.begin()))
 			{
 				results.push_back(name);
 			}
@@ -202,4 +203,17 @@ bool dirExists(const string& path)
 	else if (info.st_mode & S_IFDIR)
 		return true;
 	return false;
+}
+
+bool createDir(const string& path) {
+	int nError = 0;
+#if defined(_WIN32)
+	nError = _mkdir(path.c_str());
+#else 
+	nError = mkdir(path.c_str(), 0733);
+#endif
+	if (nError != 0) {
+		printf("Failed to create directory (error %d)\n", nError);
+	}
+	return nError == 0;
 }

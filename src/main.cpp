@@ -20,9 +20,10 @@ string apikey = "";
 string appid = "225840"; // Sven Co-op
 //string filter = "\\appid\\" + appid + "\\dedicated\\1";
 string filter = "\\appid\\" + appid;
-string statsPath = "stats/";
-string archivePath = "stats/archive/";
-string rankPath = "rankings.txt"; // ordered list of server IDs by rank
+string dataPath = "data/";
+string statsPath = "data/stats/";
+string archivePath = "data/stats/archive/";
+string rankPath = "data/rankings.txt"; // ordered list of server IDs by rank
 
 //#define DEBUG_MODE
 
@@ -463,6 +464,7 @@ bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, u
 	state.unreachable = unreachable;
 
 	g_writeStats.serversUpdated++;
+	return true;
 }
 
 void convertStats() {
@@ -692,12 +694,16 @@ void computeRanks() {
 }
 
 int main(int argc, char** argv) {
-	if (!dirExists(statsPath)) {
-		printf("Missing folder: %s\n", statsPath.c_str());
+	if (!dirExists(dataPath) && !createDir(dataPath)) {
+		printf("Failed to create folder: %s\n", statsPath.c_str());
 		return 0;
 	}
-	if (!dirExists(archivePath)) {
-		printf("Missing folder: %s\n", archivePath.c_str());
+	if (!dirExists(statsPath) && !createDir(statsPath)) {
+		printf("Failed to create folder: %s\n", statsPath.c_str());
+		return 0;
+	}
+	if (!dirExists(archivePath) && !createDir(archivePath)) {
+		printf("Failed to create folder: %s\n", archivePath.c_str());
 		return 0;
 	}
 	loadApiKey();
@@ -734,7 +740,7 @@ int main(int argc, char** argv) {
 	while (1) {
 		uint64_t fetchStartTime = getEpochMillis();
 		Document json;
-		Value& serverList = Value();
+		Value& serverList = json;
 		while (!getServerListJson(serverList, json)) {
 			this_thread::sleep_for(seconds(10));
 		}
