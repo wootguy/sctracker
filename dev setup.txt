@@ -1,0 +1,9 @@
+    Get latest vcpkg source zip from https://github.com/microsoft/vcpkg/releases and extract it to a folder of your choice (e.g. C:\vcpkg\)
+    
+    Open Developer Command Prompt for VS 20XX (see Windows Start menu or %PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs\Visual Studio 20XX\Visual Studio Tools\) and cd to C:\vcpkg\
+    
+    Run bootstrap-vcpkg.bat
+    
+    Run vcpkg.exe integrate install
+    
+    Run vcpkg.exe install curl

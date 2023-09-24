@@ -467,69 +467,6 @@ bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, u
 	return true;
 }
 
-void convertStats() {
-	int length;
-	char* buffer = loadFile("player_counts.json", length);
-	if (!buffer) {
-		printf("Bad convert file\n");
-		return;
-	}
-
-	Document json;
-	json.Parse(buffer);
-
-	Value& utc_data = json["utc"];
-	Value& count_data = json["count"];
-	int numElements = utc_data.GetArray().Size();
-
-	printf("Loaded %d elements\n", numElements);
-
-
-	FILE* file = fopen("player_counts.dat", "wb");
-	if (!file) {
-		printf("Can't open output file\n");
-		return;
-	}
-
-	StatFileHeader header;
-	memcpy(header.magic, "SVTK", 4);
-	header.version = STAT_FILE_VERSION;
-
-	fwrite(&header, sizeof(StatFileHeader), 1, file);
-
-	uint32_t lastUtcTime = 0;
-	uint32_t larges = 0;
-
-	for (int i = 0; i < numElements; i++) {
-		uint8_t count = count_data[i].GetInt();
-		uint32_t utc = utc_data[i].GetUint();
-
-		if (utc - lastUtcTime < 50)
-			continue;
-
-		if (utc - lastUtcTime > 65535) {
-			count |= 128;
-			larges++;
-			fwrite(&utc, sizeof(uint32_t), 1, file);
-		}
-		else if (utc - lastUtcTime > 255) {
-			count |= 64;
-			fwrite(&utc, sizeof(uint16_t), 1, file);
-		}
-		else {
-			fwrite(&utc, sizeof(uint8_t), 1, file);
-			
-		}
-
-		fwrite(&count, sizeof(uint8_t), 1, file);
-
-		lastUtcTime = utc;
-	}
-	printf("larges deltas: %u", larges);
-
-	fclose(file);
-}
-
 void updateStats(Value& serverList) {
 	int numServers = serverList.GetArray().Size();
 
