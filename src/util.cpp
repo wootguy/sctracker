@@ -3,6 +3,21 @@
 #include <fstream>
 #include <chrono>
 
+#if defined(WIN32) || defined(_WIN32)
+#include <Windows.h>
+#include <direct.h>
+#define GetCurrentDir _getcwd
+#else
+#include <time.h>
+#include <unistd.h>
+#include <dirent.h>
+#define GetCurrentDir getcwd
+
+typedef char TCHAR;
+
+void OutputDebugString(const char* str) {}
+#endif
+
 using namespace std::chrono;
 
 vector<string> splitString(string str, const char* delimitters)
@@ -21,6 +36,16 @@ vector<string> splitString(string str, const char* delimitters)
 	split.push_back(str.substr(start));
 
 	return split;
+}
+
+string replaceString(string subject, string search, string replace) {
+	size_t pos = 0;
+	while ((pos = subject.find(search, pos)) != string::npos)
+	{
+		subject.replace(pos, search.length(), replace);
+		pos += replace.length();
+	}
+	return subject;
 }
 
 bool fileExists(string path) {
@@ -85,4 +110,85 @@ char* loadFile(const string& fileName, int& length)
 
 uint64_t getEpochMillis() {
 	return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+uint32_t getEpochSeconds() {
+	return duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
+}
+
+void winPath(string& path)
+{
+	for (int i = 0, size = path.size(); i < size; i++)
+	{
+		if (path[i] == '/')
+			path[i] = '\\';
+	}
+}
+
+vector<string> getDirFiles(string path, string extension, string startswith)
+{
+	vector<string> results;
+
+#if defined(WIN32) || defined(_WIN32)
+	path = path + startswith + "*." + extension;
+	winPath(path);
+	WIN32_FIND_DATA FindFileData;
+	HANDLE hFind;
+
+	//println("Target file is " + path);
+	hFind = FindFirstFile(path.c_str(), &FindFileData);
+	if (hFind == INVALID_HANDLE_VALUE)
+	{
+		//println("FindFirstFile failed " + str((int)GetLastError()) + " " + path);
+		return results;
+	}
+	else
+	{
+		results.push_back(FindFileData.cFileName);
+
+		while (FindNextFile(hFind, &FindFileData) != 0)
+		{
+			results.push_back(FindFileData.cFileName);
+		}
+
+		FindClose(hFind);
+	}
+#else
+	extension = toLowerCase(extension);
+	startswith = toLowerCase(startswith);
+	startswith.erase(std::remove(startswith.begin(), startswith.end(), '*'), startswith.end());
+	DIR* dir = opendir(path.c_str());
+
+	if (!dir)
+		return results;
+
+	while (true)
+	{
+		dirent* entry = readdir(dir);
+
+		if (!entry)
+			break;
+
+		if (entry->d_type == DT_DIR)
+			continue;
+
+		string name = string(entry->d_name);
+		string lowerName = toLowerCase(name);
+
+		if (extension.size() > name.size() || startswith.size() > name.size())
+			continue;
+
+		if (extension == "*" || std::equal(extension.rbegin(), extension.rend(), lowerName.rbegin()))
+		{
+			if (startswith.size() == 0 || std::equal(startswith.begin(), startswith.end(), lowerName.begin()))
+			{
+				results.push_back(name);
+			}
+		}
+	}
+
+	closedir(dir);
+#endif
+
+	return results;
 }

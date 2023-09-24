@@ -1,22 +1,36 @@
 #include "util.h"
 #include <iostream>
 #include <map>
+#include <set>
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
+#include <thread>
+#include <chrono>
+#include <stdio.h>
 
 using namespace std;
 using namespace rapidjson;
+using namespace std::chrono;
 
 string server = "https://api.steampowered.com/";
 string api = "IGameServersService/GetServerList/v1";
 string key = "";
 string appid = "225840"; // Sven Co-op
-string filter = "\\appid\\" + appid + "\\dedicated\\1";
+//string filter = "\\appid\\" + appid + "\\dedicated\\1";
+string filter = "\\appid\\" + appid;
 string requestUrl = server + api + "?key=" + key + "&filter=" + filter + "&limit=20000";
-string statsPath = "stats";
+string statsPath = "stats/";
 
 #define STAT_FILE_VERSION 1
+//#define SERVER_DEAD_SECONDS (60*60*24*7) // seconds before a server is considered "dead" and its stats are archived
+//#define SERVER_FCLOSE_TIME (60*60) // close file handle if server is dead for this long
+//#define SERVER_UNREACHABLE_TIME (60*5) // write unreachable stat after this time
+#define STAT_WRITE_FREQ 10 // how often to write stats
+
+#define SERVER_DEAD_SECONDS (90) // seconds before a server is considered "dead" and its stats are archived
+#define SERVER_FCLOSE_TIME (60) // close file handle if server is dead for this long
+#define SERVER_UNREACHABLE_TIME (30) // write unreachable stat after this time
 
 #pragma pack(push, 1)
 struct StatFileHeader {
@@ -26,7 +40,8 @@ struct StatFileHeader {
 
 #define FL_PCNT_TIME16 64		// time delta is 16 bits and relative to the last stat
 #define FL_PCNT_TIME32 128		// time is a 32 bit absoulte value
-#define PCNT_UNREACHABLE (FL_PCNT_TIME16|FL_PCNT_TIME32) // if both are set, the server is unreachable
+#define PCNT_FL_MASK (FL_PCNT_TIME16|FL_PCNT_TIME32)
+#define PCNT_UNREACHABLE (PCNT_FL_MASK) // if both are set, the server is unreachable
 // if neither are set, time delta is 8-bits and relative to the last stat
 
 // bottom 6 bits are current player count
@@ -34,37 +49,56 @@ struct StatFileHeader {
 #pragma pack(pop)
 
 struct ServerState {
-	uint8_t ip[4];
-	uint16_t port;
-	char name[64];
-	char map[64];
+	string addr; // port separator converted to filename safe character
+	string name;
 	uint8_t players;
-	uint8_t maxPlayers;
 	bool unreachable;
 
-	uint32_t lastCountStat; // last time a player count stat was written (epoch seconds)
+	uint32_t lastWriteTime; // last time a player count stat was written (epoch seconds)
+	uint32_t lastResponseTime; // last time data was received for this server
+	FILE* file;
+	
+	string getStatFilePath();
+	uint32_t secondsSinceLastResponse();
+	string displayName();
+	void init();
+}; 
 
-	string getAddrString();
-	string getIdString();
+void ServerState::init() {
+	addr = "";
+	name = "";
+	players = 0;
+	unreachable = false;
+	lastWriteTime = 0;
+	lastResponseTime = 0;
+	file = NULL;
+}
+
+struct WriteStats {
+	int bytesWritten = 0;
+	int serversUpdated = 0;
 };
 
-string ServerState::getAddrString() {
-	return to_string(ip[0]) + "." + to_string(ip[1]) + "." 
-		+ to_string(ip[2]) + "." + to_string(ip[3]) + ":" + to_string(port);
+WriteStats g_writeStats;
+
+bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, uint32_t now);
+bool createServerStatFile(ServerState& newState);
+bool loadServerHistory(ServerState& state);
+void updateStats(Value& serverList);
+bool validateStatName(string name);
+bool parseServerJson(Value& json, ServerState& state);
+bool getServerListJson(Value& serverList);
+
+string ServerState::getStatFilePath() {
+	return statsPath + addr + ".dat";
 }
 
-// string used as an ID for g_servers and file names
-string ServerState::getIdString() {
-	return to_string(ip[0]) + "." + to_string(ip[1]) + "."
-		+ to_string(ip[2]) + "." + to_string(ip[3]) + "_" + to_string(port);
+uint32_t ServerState::secondsSinceLastResponse() {
+	return getEpochSeconds() - lastResponseTime;
 }
 
-string getStatFolderPath(string id) {
-	return statsPath + "/" + id;
-}
-
-string getStatFilePath(string id) {
-	return statsPath + "/" + id + ".dat";
+string ServerState::displayName() {
+	return "[" + addr + "] " + name;
 }
 
 map<string, ServerState> g_servers;
@@ -112,90 +146,242 @@ bool parseServerJson(Value& json, ServerState& state) {
 		return false;
 	}
 
-	memset(&state, 0, sizeof(ServerState));
-
-	strncpy(state.name, json["name"].GetString(), 64);
-	strncpy(state.map, json["map"].GetString(), 64);
-	state.name[63] = 0;
-	state.map[63] = 0;
-
+	state.init();
 	state.players = json["players"].GetInt();
-	state.maxPlayers = json["max_players"].GetInt();
-
-	string addr = json["addr"].GetString();
-
-	int ipIdx = addr.find(":");
-	if (ipIdx == -1) {
-		printf("Server json missing port in addr: '%s'\n", addr.c_str());
-		return false;
-	}
-	string ip = addr.substr(0, ipIdx);
-	int iport = atoi(addr.substr(ipIdx+1).c_str());
-
-	vector<string> ipbytes = splitString(ip, ".");
-	if (ipbytes.size() != 4) {
-		printf("Server json has invalid ip parts: '%s'\n", addr.c_str());
-		return false;
-	}
-
-	for (int i = 0; i < 4; i++) {
-		int b = atoi(ipbytes[i].c_str());
-		if (b > 255 || b < 0) {
-			printf("Server json has invalid ip bytes: '%s'\n", addr.c_str());
-			return false;
-		}
-		state.ip[i] = b;
-	}
-
-	if (iport > 65535 || iport <= 0) {
-		printf("Server json has invalid port: '%s'\n", addr.c_str());
-		return false;
-	}
-	state.port = iport;
+	state.addr = replaceString(json["addr"].GetString(), ":", "_");
+	state.name = json["name"].GetString();
 
 	return true;
 }
 
 // false indicates a problem with the file
-bool loadServerHistory(string id, ServerState& state) {
-	string fpath = getStatFilePath(id);
+bool loadServerHistory(ServerState& state) {
+	string fpath = state.getStatFilePath();
 
-	if (!fileExists(fpath)) {
-		return true;
-	}
-	
-	FILE* file = fopen(fpath.c_str(), "rb");
-	if (!file) {
+	state.file = fopen(fpath.c_str(), "rb+");
+	if (!state.file) {
 		printf("Failed to open stat file: %s\n", fpath.c_str());
 		return false;
 	}
 
 	StatFileHeader header;
 
-	if (!fread(&header, sizeof(StatFileHeader), 1, file)) {
+	if (!fread(&header, sizeof(StatFileHeader), 1, state.file)) {
 		printf("Failed to read stat file: %s\n", fpath.c_str());
-		fclose(file);
+		fclose(state.file);
+		state.file = NULL;
 		return false;
 	}
 
 	if (header.version != STAT_FILE_VERSION) {
 		printf("Bad version %d in stat file: %s\n", header.version, fpath.c_str());
-		fclose(file);
+		fclose(state.file);
+		state.file = NULL;
 		return false;
 	}
 
-	if (strcmp(header.magic, "SVTK")) {
+	if (strncmp(header.magic, "SVTK", 4)) {
 		string magic = string(header.magic, 4);
 		printf("Bad magic bytes '%s' in stat file: %s\n", magic.c_str(), fpath.c_str());
-		fclose(file);
+		fclose(state.file);
+		state.file = NULL;
 		return false;
 	}
 
-	memset(&state, 0, sizeof(ServerState));
+	string dispName = state.displayName();
+	//printf("History for %s\n", dispName.c_str());
+
+	while (1) {
+		uint8_t stat;
+		if (!fread(&stat, sizeof(uint8_t), 1, state.file)) {
+			break;
+		}
+		uint8_t flags = stat & PCNT_FL_MASK;
+
+		if ((stat & PCNT_FL_MASK) == PCNT_UNREACHABLE) {
+			state.players = 0;
+			state.unreachable = true;
+			flags = (stat << 2) & PCNT_FL_MASK;
+			if (stat & 0x0f) {
+				printf("Invalid flags in unreachable byte %X\n", (int)stat);
+			}
+		}
+		else {
+			state.unreachable = false;
+			state.players = stat & ~PCNT_FL_MASK;
+			if (state.players > 32) {
+				printf("Invalid player count\n");
+			}
+		}
+
+		int dt = 0;
+
+		if (flags & FL_PCNT_TIME32) {
+			uint32_t newTime = 0;
+			if (!fread(&newTime, sizeof(uint32_t), 1, state.file)) {
+				printf("Failed to read stat time\n");
+				return false;
+			}
+			state.lastWriteTime = newTime;
+		}
+		else if (flags & FL_PCNT_TIME16) {
+			uint16_t delta;
+			if (!fread(&delta, sizeof(uint16_t), 1, state.file)) {
+				printf("Failed to read stat time\n");
+				return false;
+			}
+			state.lastWriteTime += delta;
+			dt = delta;
+		}
+		else {
+			uint8_t delta;
+			if (!fread(&delta, sizeof(uint8_t), 1, state.file)) {
+				printf("Failed to read stat time\n");
+				return false;
+			}
+			state.lastWriteTime += delta;
+			dt = delta;
+		}
+
+		//printf("Time %u, delta %d, count %d, unreachable %d\n", state.lastWriteTime, dt, (int)state.players, (int)state.unreachable);
+	}
+
+	uint32_t now = getEpochSeconds();
+
+	if (state.lastWriteTime > now) {
+		printf("Parsed invalid time +%u\n", state.lastWriteTime - now);
+		return false;
+	}
+
+	state.lastResponseTime = state.lastWriteTime;
+
+	// write unreachable stat at the same time as the last stat,
+	// which will be when the program was stopped
+
+	uint32_t deadTime = state.secondsSinceLastResponse();
+	if (!state.unreachable && deadTime > SERVER_UNREACHABLE_TIME) {
+		writeServerStat(state, 0, true, state.lastWriteTime);
+		state.lastWriteTime = 0; // force full time write next update
+		state.players = 0;
+		g_writeStats.serversUpdated -= 1;
+		printf("Loaded server state + append unreachable stat: %s\n", dispName.c_str());
+	}
+	else {
+		printf("Loaded server state: %s\n", dispName.c_str());
+	}
+
+	return true;
 }
 
-void writeServerStat(ServerState& currentState, ServerState* oldState) {
+bool createServerStatFile(ServerState& newState) {
+	string dispName = newState.displayName();
+	printf("New server: %s\n", dispName.c_str());
 
+	string fpath = newState.getStatFilePath();
+	if (fileExists(fpath)) {
+		printf("Stat file already exists: %s\n", fpath.c_str());
+		return loadServerHistory(newState);
+	}
+
+	newState.file = fopen(fpath.c_str(), "wb");
+	if (!newState.file) {
+		printf("Failed to create stat file: %s\n", fpath.c_str());
+		return false;
+	}
+
+	StatFileHeader header;
+	header.version = STAT_FILE_VERSION;
+	memcpy(header.magic, "SVTK", 4);
+
+	if (!fwrite(&header, sizeof(StatFileHeader), 1, newState.file)) {
+		printf("Failed to write to stat file: %s\n", fpath.c_str());
+		return false;
+	}
+
+	g_writeStats.bytesWritten += sizeof(StatFileHeader);
+	newState.players = 255; // force a stat write
+
+	return true;
+}
+
+bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, uint32_t now) {
+	uint32_t writeTimeDelta = now - state.lastWriteTime;
+	string dispName = state.displayName();
+
+	if (state.lastWriteTime > now) {
+		printf("Invalid last write time! +%u\n", state.lastWriteTime - now);
+		return false;
+	}
+	if (!state.file) {
+		string fpath = state.getStatFilePath();
+		state.file = fopen(fpath.c_str(), "ab");
+		if (!state.file) {
+			printf("Failed to reopen stat file: %s\n", fpath.c_str());
+			return false;
+		}
+		printf("Reopened file after server died for %.1f hours: %s\n", writeTimeDelta / (60.0f*60.0f), dispName.c_str());
+	}
+	if (state.players == newPlayerCount && unreachable == state.unreachable) {
+		return true; // no delta to write
+	}
+
+	if (!unreachable && state.unreachable) {
+		uint32_t unresponsiveDelta = now - state.lastResponseTime;
+		printf("Server is responding again (%.1f minutes): %s\n", unresponsiveDelta / 60.0f, dispName.c_str());
+	}
+	else if (state.players != 255 && !unreachable) {
+		printf("%d -> %d after %us: %s\n", state.players, newPlayerCount, writeTimeDelta, dispName.c_str());
+	}
+
+	state.players = unreachable ? 0 : newPlayerCount;
+
+	uint8_t stat = state.players;
+	uint8_t timeFlag = 0;
+
+	if (writeTimeDelta > 65535) {
+		timeFlag = FL_PCNT_TIME32;
+	}
+	else if (writeTimeDelta > 255) {
+		timeFlag = FL_PCNT_TIME16;
+	}
+	
+	if (unreachable) {
+		// player count unknown, so use the unused bits for more flags
+		stat = PCNT_UNREACHABLE | (timeFlag >> 2);
+	}
+	else {
+		stat |= timeFlag;
+	}
+	fwrite(&stat, sizeof(uint8_t), 1, state.file);
+	
+	if (writeTimeDelta > 65535) {
+		g_writeStats.bytesWritten += 1 + 4;
+		if (!fwrite(&now, sizeof(uint32_t), 1, state.file)) {
+			printf("Stat write failed\n");
+			return false;
+		}
+	}
+	else if (writeTimeDelta > 255) {
+		g_writeStats.bytesWritten += 1 + 2;
+		if (!fwrite(&writeTimeDelta, sizeof(uint16_t), 1, state.file)) {
+			printf("Stat write failed\n");
+			return false;
+		}
+	}
+	else {
+		g_writeStats.bytesWritten += 1 + 1;
+		if (!fwrite(&writeTimeDelta, sizeof(uint8_t), 1, state.file)) {
+			printf("Stat write failed\n");
+			return false;
+		}
+	}
+
+	fflush(state.file);
+
+	state.lastWriteTime = now;
+	state.unreachable = unreachable;
+
+	g_writeStats.serversUpdated++;
 }
 
 void convertStats() {
@@ -264,38 +450,150 @@ void convertStats() {
 void updateStats(Value& serverList) {
 	int numServers = serverList.GetArray().Size();
 
+	set<string> updatedServers;
+	int totalWrites = 0;
+
+	g_writeStats.bytesWritten = 0;
+	g_writeStats.serversUpdated = 0;
+
+	uint32_t now = getEpochSeconds();
+
 	for (int i = 0; i < numServers; i++) {
 		ServerState newState;
 		if (!parseServerJson(serverList[i], newState)) {
 			continue;
 		}
-		string id = newState.getIdString();
+
+		string id = newState.addr;
+		updatedServers.insert(newState.addr);
 
 		if (g_servers.find(id) == g_servers.end()) {
-			ServerState oldState;
-			loadServerHistory(id, oldState);
-			writeServerStat(newState, NULL);
-		}
-		else {
-			writeServerStat(newState, &g_servers[id]);
+			g_servers[id] = ServerState();
+			ServerState& state = g_servers[id];
+			state.init();
+			state.addr = newState.addr;
+			state.name = newState.name;
+			if (!createServerStatFile(state)) {
+				g_servers.erase(id);
+				continue;
+			}
 		}
 
-		printf("[%2d/%-2d] %s (%s)\n", newState.players, newState.maxPlayers, newState.name, newState.getAddrString().c_str());
-		//cout << stringifyJson(s) << endl;
+		g_servers[id].name = newState.name;
+		writeServerStat(g_servers[id], newState.players, false, now);
+		g_servers[id].lastResponseTime = now;
 	}
 
-	std::cout << "Total servers: " << numServers << std::endl;
+	vector<string> delKeys;
+
+	for (auto item : g_servers) {
+		if (updatedServers.find(item.first) == updatedServers.end()) {
+			ServerState& state = g_servers[item.first];
+			uint32_t deadTime = state.secondsSinceLastResponse();					
+			string dispName = state.displayName();
+
+			if (deadTime > SERVER_DEAD_SECONDS) {
+				printf("Server is dead (%.1f hours): %s\n", deadTime / (60.0f * 60.0f), dispName.c_str());
+				delKeys.push_back(item.first);
+			}
+			else if (deadTime > SERVER_FCLOSE_TIME && state.file) {
+				printf("Closing file for inactive server (%.1f minutes): %s\n", deadTime/60.0f, dispName.c_str());
+				if (state.file) {
+					fclose(state.file);
+					state.file = NULL;
+				}
+			} else if (!state.unreachable && deadTime > SERVER_UNREACHABLE_TIME) {
+				printf("Server unreachable (%.1f minutes): %s\n", deadTime / 60.0f, dispName.c_str());
+				writeServerStat(state, 0, true, now);
+			}
+		}
+	}
+
+	for (string key : delKeys) {
+		ServerState& state = g_servers[key];
+		if (state.file) {
+			fclose(state.file);
+			state.file = NULL;
+		}
+		g_servers.erase(key);
+	}
+
+	printf("Updated %d/%d servers, wrote %d bytes\n", g_writeStats.serversUpdated, (int)g_servers.size(), g_writeStats.bytesWritten);
+}
+
+bool validateStatName(string name) {
+	vector<string> parts = splitString(name, "_");
+	vector<string> ipParts = splitString(parts[0], ".");
+
+	if (parts.size() != 2 || ipParts.size() != 4) {
+		return false;
+	}
+
+	int port = atoi(parts[1].c_str());
+	if (port <= 0 || port > 65535) {
+		return false;
+	}
+
+	for (int i = 0; i < ipParts.size(); i++) {
+		int b = atoi(ipParts[i].c_str());
+		if (b < 0 || b > 255) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 int main(int argc, char** argv) {
-	//convertStats();
-	//if (1)return 0;
+	vector<string> statFiles = getDirFiles(statsPath, "dat", "");
+
+	for (string path : statFiles) {
+		string fname = path.substr(0, path.find_last_of("."));
+		if (!validateStatName(fname)) {
+			printf("Invalid stat file name: %s", fname.c_str());
+			return 0;
+		}
+
+		g_servers[fname] = ServerState();
+		ServerState& state = g_servers[fname];
+		state.init();
+		state.addr = fname;
+		if (!loadServerHistory(state)) {
+			g_servers.erase(fname);
+			printf("File corruption: %s", fname.c_str());
+			return 0;
+		}
+	}
 	
 	Value& serverList = Value();
+	uint32_t lastStatTime = 0;
+	uint64_t writeCount = 1;
+	uint64_t startTime = (uint64_t)getEpochSeconds() * 1000ULL;
+	uint64_t nextWriteTime = 0;
 	
-	if (getServerListJson(serverList)) {
+	while (1) {
+		while (!getServerListJson(serverList)) {
+			this_thread::sleep_for(seconds(5));
+		}
+
+		uint64_t now = getEpochMillis();
+		uint32_t waitTime = nextWriteTime - now;
+
+		if (nextWriteTime > now) {
+			printf("Server list fetched. Wait %.1fs\n", waitTime / 1000.0f);
+			this_thread::sleep_for(milliseconds(waitTime));
+		}
+
 		updateStats(serverList);
+
+		do {
+			nextWriteTime = startTime + ((uint64_t)(STAT_WRITE_FREQ*1000) * writeCount);
+			writeCount++;
+		} while (nextWriteTime < now);
+
+		printf("\n");
 	}
+	
 
 	return 0;
 }
