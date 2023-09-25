@@ -24,14 +24,14 @@ string dataPath = "data/";
 string statsPath = "data/stats/";
 string archivePath = "data/stats/archive/";
 string rankPath = "data/rankings.txt"; // ordered list of server IDs by rank
-string steamJsonPath = "data/servers.json"; // ordered list of server IDs by rank
+string serverInfoPath = "data/tracker.json"; // ordered list of server IDs by rank
 
 //#define DEBUG_MODE
 
 #ifdef DEBUG_MODE
 	#define SERVER_DEAD_SECONDS (60)
 	#define SERVER_UNREACHABLE_TIME (30)
-	#define STAT_WRITE_FREQ 10
+	#define STAT_WRITE_FREQ 5
 	#define RANK_FREQ 20
 #else
 	#define SERVER_DEAD_SECONDS (60*60*24*7) // seconds before a server is considered "dead" and its stats are archived
@@ -62,11 +62,19 @@ struct StatFileHeader {
 
 #pragma pack(pop)
 
+#define FL_SERVER_DEDICATED 1
+#define FL_SERVER_SECURE 2
+#define FL_SERVER_LINUX 4 // else windows
+
 struct ServerState {
 	string addr; // port separator converted to filename safe character
 	string name;
+	string map;
 	uint8_t players;
+	uint8_t maxPlayers;
+	uint8_t bots;
 	bool unreachable;
+	uint8_t flags;
 
 	uint32_t lastWriteTime; // last time a player count stat was written (epoch seconds)
 	uint32_t lastResponseTime; // last time data was received for this server
@@ -82,10 +90,15 @@ struct ServerState {
 void ServerState::init() {
 	addr = "";
 	name = "";
+	map = "";
 	players = 0;
 	unreachable = false;
+	flags = 0;
 	lastWriteTime = 0;
 	lastResponseTime = 0;
+	maxPlayers = 0;
+	bots = 0;
+	rankSum = 0;
 }
 
 struct WriteStats {
@@ -97,12 +110,13 @@ struct WriteStats {
 WriteStats g_writeStats;
 map<string, ServerState> g_servers;
 
+uint32_t g_lastRankTime = 0;
+uint32_t g_lastUpdateTime = 0;
+
 bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, uint32_t now);
 bool createServerStatFile(ServerState& newState);
 bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted);
-void updateStats(Value& serverList);
 bool validateStatName(string name);
-bool parseServerJson(Value& json, ServerState& state);
 
 string ServerState::getStatFilePath() {
 	return statsPath + addr + ".dat";
@@ -120,22 +134,16 @@ string ServerState::displayName() {
 	return "[" + addr + "] " + name;
 }
 
-void loadApiKey() {
+bool loadApiKey() {
 	int length;
 	char* buffer = loadFile("api_key.txt", length);
 	if (!buffer) {
 		printf("Bad api key file\n");
-		return;
+		return false;
 	}
 	apikey = buffer;
 	delete[] buffer;
-}
-
-string stringifyJson(Value& v) {
-	StringBuffer buffer;
-	Writer<StringBuffer> writer(buffer);
-	v.Accept(writer);
-	return buffer.GetString();
+	return true;
 }
 
 bool getServerListJson(Value& serverList, Document& json) {
@@ -167,9 +175,9 @@ bool getServerListJson(Value& serverList, Document& json) {
 	return true;
 }
 
-bool parseServerJson(Value& json, ServerState& state) {
-	if (!(json.HasMember("name") && json.HasMember("map") && json.HasMember("players")
-			&& json.HasMember("max_players") && json.HasMember("addr"))) {
+bool parseSteamServerJson(Value& json, ServerState& state) {
+	if (!(json.HasMember("name") && json.HasMember("map") && json.HasMember("players") && json.HasMember("flags")
+			&& json.HasMember("max_players") && json.HasMember("addr") && json.HasMember("bots"))) {
 		printf("Server json missing values\n");
 		return false;
 	}
@@ -178,7 +186,24 @@ bool parseServerJson(Value& json, ServerState& state) {
 	state.players = json["players"].GetInt();
 	state.addr = replaceString(json["addr"].GetString(), ":", "_");
 	state.name = json["name"].GetString();
+	state.map = json["map"].GetString();
+	state.maxPlayers = json["max_players"].GetUint();
+	state.bots = json["bots"].GetUint();
+	state.flags = json["flags"].GetUint();
+	return true;
+}
 
+bool parseProgramServerJson(Value& json, ServerState& state) {
+	if (!(json.HasMember("name") && json.HasMember("flags") && json.HasMember("max_players"))) {
+		printf("Program json missing values\n");
+		return false;
+	}
+
+	state.init();
+	state.name = json["name"].GetString();
+	state.maxPlayers = json["max_players"].GetUint();
+	state.flags = json["flags"].GetUint();
+	// players/rank and other live data should be loaded/calculated soon
 	return true;
 }
 
@@ -213,23 +238,23 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 		}
 	}
 	else {
+		printf("Stat file does not exist for: %s\n", state.addr.c_str());
 		return false;
 	}
 	
 
 	StatFileHeader header;
 
+	errno = 0;
 	if (!fread(&header, sizeof(StatFileHeader), 1, file)) {
-		printf("Failed to read stat file: %s\n", fpath.c_str());
+		printf("Failed to read stat file (error %d): %s\n", errno, fpath.c_str());
 		fclose(file);
-		file = NULL;
 		return false;
 	}
 
 	if (header.version != STAT_FILE_VERSION) {
 		printf("Bad version %d in stat file: %s\n", header.version, fpath.c_str());
 		fclose(file);
-		file = NULL;
 		return false;
 	}
 
@@ -237,7 +262,6 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 		string magic = string(header.magic, 4);
 		printf("Bad magic bytes '%s' in stat file: %s\n", magic.c_str(), fpath.c_str());
 		fclose(file);
-		file = NULL;
 		return false;
 	}
 
@@ -248,6 +272,8 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 	uint32_t nextRankTime = rankStartTime;
 	state.rankSum = 0;
 	uint32_t rankDataPoints = 0;
+
+	state.players = 0;
 
 	while (1) {
 		uint8_t stat;
@@ -468,7 +494,36 @@ bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, u
 	return true;
 }
 
-void updateStats(Value& serverList) {
+bool archiveStats(string serverId) {
+	if (g_servers.find(serverId) == g_servers.end()) {
+		printf("Archive failed. No server with ID: %s\n", serverId.c_str());
+		return false;
+	}
+	ServerState& state = g_servers[serverId];
+	string srcPath = state.getStatFilePath();
+	string dstPath = state.getStatArchiveFilePath();
+
+	if (fileExists(dstPath)) {
+		printf("Archive failed. Destination exists: %s\n", dstPath.c_str());
+		return false;
+	}
+	else if (!fileExists(srcPath)) {
+		printf("Archive failed. Source file missing: %s\n", srcPath.c_str());
+		return false;
+	}
+
+	errno = 0;
+	if (rename(srcPath.c_str(), dstPath.c_str()) == -1) {
+		printf("Archive failed. Rename error %d: %s\n", errno, srcPath.c_str());
+		return false;
+	}
+	
+	printf("Archived server: %s\n", serverId.c_str());
+
+	return true;
+}
+
+void updateStats(Document& doc, Value& serverList) {
 	int numServers = serverList.GetArray().Size();
 
 	set<string> updatedServers;
@@ -481,7 +536,7 @@ void updateStats(Value& serverList) {
 
 	for (int i = 0; i < numServers; i++) {
 		ServerState newState;
-		if (!parseServerJson(serverList[i], newState)) {
+		if (!parseSteamServerJson(serverList[i], newState)) {
 			continue;
 		}
 
@@ -489,11 +544,8 @@ void updateStats(Value& serverList) {
 		updatedServers.insert(newState.addr);
 
 		if (g_servers.find(id) == g_servers.end()) {
-			g_servers[id] = ServerState();
+			g_servers[id] = newState;
 			ServerState& state = g_servers[id];
-			state.init();
-			state.addr = newState.addr;
-			state.name = newState.name;
 			if (!createServerStatFile(state)) {
 				g_servers.erase(id);
 				continue;
@@ -501,6 +553,10 @@ void updateStats(Value& serverList) {
 		}
 
 		g_servers[id].name = newState.name;
+		g_servers[id].map = newState.map;
+		g_servers[id].bots = newState.bots;
+		g_servers[id].flags = newState.flags;
+		g_servers[id].maxPlayers = newState.maxPlayers;
 		writeServerStat(g_servers[id], newState.players, false, now);
 		g_servers[id].lastResponseTime = now;
 	}
@@ -525,24 +581,8 @@ void updateStats(Value& serverList) {
 	}
 
 	for (string key : delKeys) {
-		ServerState& state = g_servers[key];
-		string srcPath = state.getStatFilePath();
-		string dstPath = state.getStatArchiveFilePath();
-		
-		if (fileExists(dstPath)) {
-			printf("Archive failed. Destination exists: %s\n", dstPath.c_str());
-		}
-		else if (!fileExists(srcPath)) {
-			printf("Archive failed. Source file missing: %s\n", srcPath.c_str());
-		}
-		else {
-			errno = 0;
-			if (rename(srcPath.c_str(), dstPath.c_str()) == -1) {
-				printf("Archive failed. Rename error %d: %s\n", errno, srcPath.c_str());
-			}
-			else {
-				g_servers.erase(key);
-			}
+		if (archiveStats(key)) {
+			g_servers.erase(key);
 		}
 	}
 }
@@ -582,6 +622,10 @@ void computeRanks() {
 
 	vector<ServerState> rankedServers;
 
+	for (auto item : g_servers) {
+		item.second.rankSum = 0;
+	}
+
 	for (string path : statFiles) {
 		string fname = path.substr(0, path.find_last_of("."));
 		if (!validateStatName(fname)) {
@@ -597,26 +641,16 @@ void computeRanks() {
 		}
 		if (!loadServerHistory(state, now, false)) {
 			g_servers.erase(fname);
-			printf("File corruption: %s", fname.c_str());
+			printf("File corruption: %s\n", fname.c_str());
 			continue;
 		}
 		if (state.rankSum > 0)
 			rankedServers.push_back(state);
 	}
 
-	FILE* file = fopen(rankPath.c_str(), "w");
-	if (!file) {
-		printf("Failed to open rank file (%d): %s\n", errno, rankPath.c_str());
-		return;
-	}
-
 	std::sort(rankedServers.begin(), rankedServers.end(), compareByRank);
 
 	printf("Server ranks:\n");
-
-	string rankInfo = "rank_age=" + to_string(RANK_STAT_MAX_AGE) + "\nrank_freq=" + to_string(RANK_STAT_INTERVAL) + "\n";
-	fwrite(rankInfo.c_str(), rankInfo.size(), 1, file);
-
 	for (int i = 0; i < rankedServers.size(); i++) {
 		ServerState& serv = rankedServers[i];
 		if (i < 10) {
@@ -624,11 +658,131 @@ void computeRanks() {
 			float avg = serv.rankSum / (float)TOTAL_RANK_DATA_POINTS;
 			printf("%2d) %.2f = %s\n", i+1, avg, dispName.c_str());
 		}
-		string line = to_string(serv.rankSum) + "=" + serv.addr + "=" + serv.name + "\n";
-		fwrite(line.c_str(), line.size(), 1, file);
+	}
+}
+
+void cleanupServerListJson(Document& doc, Value& serverList) {
+	int numServers = serverList.GetArray().Size();
+
+	for (int i = 0; i < numServers; i++) {
+		Value& server = serverList[i];
+
+		uint32_t flags = 0;
+		if (server["dedicated"].GetBool()) {
+			flags |= FL_SERVER_DEDICATED;
+		}
+		if (server["secure"].GetBool()) {
+			flags |= FL_SERVER_SECURE;
+		}
+		if (strcmp(server["os"].GetString(), "l") == 0) {
+			flags |= FL_SERVER_LINUX;
+		}
+		server.AddMember("flags", flags, doc.GetAllocator());
+
+		server.RemoveMember("appid");
+		server.RemoveMember("steamid");
+		server.RemoveMember("gamedir");
+		server.RemoveMember("gameport");
+		server.RemoveMember("version");
+		server.RemoveMember("product");
+		server.RemoveMember("region");
+		server.RemoveMember("dedicated");
+		server.RemoveMember("secure");
+		server.RemoveMember("os");
+	}
+}
+
+void saveServerInfos() {
+	Document infoDoc;
+	infoDoc.SetObject();
+
+	auto& allocator = infoDoc.GetAllocator();
+	Value serverArray(kArrayType);
+
+	Value serversObj;
+	serversObj.SetObject();
+
+	for (auto item : g_servers) {
+		ServerState& server = item.second;
+		Value obj;
+		Value name(server.name.c_str(), allocator);
+		Value addr(item.first.c_str(), allocator);
+		Value map(server.map.c_str(), allocator);
+
+		obj.SetObject();
+		obj.AddMember("name", name, allocator);
+		obj.AddMember("flags", server.flags, allocator);
+		obj.AddMember("time", server.lastResponseTime, allocator);
+		obj.AddMember("max_players", server.maxPlayers, allocator);
+		obj.AddMember("players", server.players, allocator);
+		obj.AddMember("bots", server.bots, allocator);
+		obj.AddMember("map", map, allocator);		
+		obj.AddMember("rank", server.rankSum, allocator);		
+
+		serversObj.AddMember(addr, obj, allocator);
 	}
 
-	fclose(file);
+	infoDoc.AddMember("updateFreq", STAT_WRITE_FREQ, allocator);
+	infoDoc.AddMember("deadTime", SERVER_DEAD_SECONDS, allocator);
+	infoDoc.AddMember("unreachableTime", SERVER_UNREACHABLE_TIME, allocator);
+	infoDoc.AddMember("rankFreq", RANK_FREQ, allocator);
+	infoDoc.AddMember("rankStatMaxAge", RANK_STAT_MAX_AGE, allocator);
+	infoDoc.AddMember("rankStatInterval", RANK_STAT_INTERVAL, allocator);
+	infoDoc.AddMember("lastRankTime", g_lastRankTime, allocator);
+	infoDoc.AddMember("lastUpdateTime", g_lastUpdateTime, allocator);
+	infoDoc.AddMember("servers", serversObj, allocator);
+
+	writeJson(serverInfoPath + ".temp", infoDoc);
+	remove(serverInfoPath.c_str());
+	rename((serverInfoPath + ".temp").c_str(), serverInfoPath.c_str());
+}
+
+bool loadServerInfos() {
+	vector<string> statFiles = getDirFiles(statsPath, "dat", "");
+
+	Document serverDoc;
+	Value& serverInfo = serverDoc;
+	if (!loadJson(serverInfoPath, serverDoc) || !serverInfo.IsObject() || !serverInfo.HasMember("servers")) {
+		printf("Failed to load: %s\n", serverInfoPath.c_str());
+	}
+	else {
+		serverInfo = serverInfo["servers"];
+	}	
+
+	for (string path : statFiles) {
+		string fname = path.substr(0, path.find_last_of("."));
+		if (!validateStatName(fname)) {
+			printf("Invalid stat file name: %s", fname.c_str());
+			return false;
+		}
+
+		g_servers[fname] = ServerState();
+		ServerState& state = g_servers[fname];
+		state.init();
+		state.addr = fname;
+
+		if (serverInfo.IsObject() && serverInfo.HasMember(fname.c_str())) {
+			Value& info = serverInfo[fname.c_str()];
+			parseProgramServerJson(info, state);
+			state.addr = fname;
+		}
+		else {
+			printf("Missing info for server: %s\n", fname.c_str());
+			if (!archiveStats(fname)) {
+				return false;
+			}
+			g_servers.erase(fname);
+			continue;
+		}
+
+		if (!loadServerHistory(state, getEpochSeconds(), true)) {
+			g_servers.erase(fname);
+			printf("File corruption: %s\n", fname.c_str());
+			return false;
+		}
+	}
+
+	return true;
 }
 
 int main(int argc, char** argv) {
@@ -644,33 +798,18 @@ int main(int argc, char** argv) {
 		printf("Failed to create folder: %s\n", archivePath.c_str());
 		return 0;
 	}
+	
 	loadApiKey();
 
-	vector<string> statFiles = getDirFiles(statsPath, "dat", "");
-
-	for (string path : statFiles) {
-		string fname = path.substr(0, path.find_last_of("."));
-		if (!validateStatName(fname)) {
-			printf("Invalid stat file name: %s", fname.c_str());
-			return 0;
-		}
-
-		g_servers[fname] = ServerState();
-		ServerState& state = g_servers[fname];
-		state.init();
-		state.addr = fname;
-		if (!loadServerHistory(state, getEpochSeconds(), true)) {
-			g_servers.erase(fname);
-			printf("File corruption: %s", fname.c_str());
-			return 0;
-		}
+	if (!loadApiKey() || !loadServerInfos()) {
+		return 0;
 	}
 	
 	uint32_t lastStatTime = 0;
 	uint64_t writeCount = 1;
 	uint64_t startTime = (uint64_t)getEpochSeconds() * 1000ULL;
 	uint64_t nextWriteTime = startTime + ((uint64_t)(STAT_WRITE_FREQ * 1000) * writeCount);
-	uint32_t lastRankTime = 0;
+	
 	uint64_t updateStartTime = getEpochMillis();
 
 	printf("Startup finished. Begin scanning\n\n");
@@ -681,20 +820,9 @@ int main(int argc, char** argv) {
 		Value& serverList = json;
 		while (!getServerListJson(serverList, json)) {
 			this_thread::sleep_for(seconds(10));
-		}
+		}	
 
-		FILE* jsonFile = fopen(steamJsonPath.c_str(), "wb");
-		if (jsonFile) {
-			string jsonString = stringifyJson(serverList);
-			if (!fwrite(jsonString.c_str(), jsonString.size(), 1, jsonFile)) {
-				printf("Failed to write json file\n");
-			}
-			fclose(jsonFile);
-		}
-		else {
-			printf("Failed to open json file: %s\n", steamJsonPath.c_str());
-		}
-		
+		cleanupServerListJson(json, serverList);
 
 		uint64_t now = getEpochMillis();
 
@@ -710,11 +838,12 @@ int main(int argc, char** argv) {
 		}
 
 		updateStartTime = getEpochMillis();
-		updateStats(serverList);
+		updateStats(json, serverList);
+		saveServerInfos();
 
 		uint32_t nowSecs = getEpochSeconds();
-		if (nowSecs - lastRankTime > RANK_FREQ) {
-			lastRankTime = nowSecs;
+		if (nowSecs - g_lastRankTime > RANK_FREQ) {
+			g_lastRankTime = nowSecs;
 			uint64_t start = getEpochMillis();
 			g_writeStats.bytesRead = 0;
 			computeRanks();
@@ -722,6 +851,7 @@ int main(int argc, char** argv) {
 		}
 
 		printf("Updated %d/%d servers, wrote %d bytes\n", g_writeStats.serversUpdated, (int)g_servers.size(), g_writeStats.bytesWritten);
+		g_lastUpdateTime = getEpochSeconds();
 
 		do {
 			writeCount++;

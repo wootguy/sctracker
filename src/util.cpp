@@ -3,6 +3,9 @@
 #include <fstream>
 #include <chrono>
 #include <algorithm>
+#include "rapidjson/document.h"
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
 
 #if defined(WIN32) || defined(_WIN32)
 #include <Windows.h>
@@ -23,6 +26,7 @@ void OutputDebugString(const char* str) {}
 #endif
 
 using namespace std::chrono;
+using namespace rapidjson;
 
 vector<string> splitString(string str, const char* delimitters)
 {
@@ -110,6 +114,47 @@ char* loadFile(const string& fileName, int& length)
 	length = (int)size; // surely models will never exceed 2 GB
 	buffer[size] = 0;
 	return buffer;
+}
+
+string stringifyJson(Value& v) {
+	StringBuffer buffer;
+	Writer<StringBuffer> writer(buffer);
+	v.Accept(writer);
+	return buffer.GetString();
+}
+
+bool loadJson(string path, Document& doc) {
+	int length;
+	char* buffer = loadFile(path, length);
+
+	if (buffer) {
+		doc.Parse(buffer);
+		delete[] buffer;
+		return true;
+	}
+
+	return false;
+}
+
+bool writeJson(string path, Value& jsonVal) {
+	errno = 0;
+	FILE* jsonFile = fopen(path.c_str(), "wb");
+	if (jsonFile) {
+		errno = 0;
+		string jsonString = stringifyJson(jsonVal);
+		if (!fwrite(jsonString.c_str(), jsonString.size(), 1, jsonFile)) {
+			printf("Failed to write json file (error %d)\n", errno);
+			fclose(jsonFile);
+			return false;
+		}
+		fclose(jsonFile);
+	}
+	else {
+		printf("Failed to open json file (error %d): %s\n", errno, path.c_str());
+		return false;
+	}
+
+	return true;
 }
 
 uint64_t getEpochMillis() {
