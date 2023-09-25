@@ -76,7 +76,7 @@ function update_table() {
 	for (var i = 0; i < g_server_list.length; i++) {
 		var key = g_server_list[i];
 		
-		var isResponsive = servers[key]["time"] >= updateTime;
+		var offlineTime = Math.round((updateTime - servers[key]["time"]) / 60);
 		
 		var row = row_template.cloneNode(true);
 		row.setAttribute("class", "server-row " + key);
@@ -84,12 +84,14 @@ function update_table() {
 		row.getElementsByClassName("name-cell")[0].innerHTML = "<a>" + (name || servers[key]["name"]) + "</a>";
 		row.getElementsByClassName("addr-cell")[0].innerHTML = key.replace("_", ":");
 		
-		if (isResponsive) {
+		if (offlineTime < g_server_data["unreachableTime"]/60) {
 			row.getElementsByClassName("players-cell")[0].innerHTML = servers[key]["players"] + " / " + servers[key]["max_players"];
 			row.getElementsByClassName("map-cell")[0].innerHTML = servers[key]["map"];
 		} else {
-			row.getElementsByClassName("players-cell")[0].innerHTML = '<div class="unresponsive">OFFLINE</div>';
-			row.getElementsByClassName("map-cell")[0].innerHTML = '<div class="unresponsive">OFFLINE</div>';
+			var tooltip = offlineTime + " minutes since the last server response";
+			var offline = '<div class="unresponsive" title="' + tooltip + '">OFFLINE</div>';;
+			row.getElementsByClassName("players-cell")[0].innerHTML = offline
+			row.getElementsByClassName("map-cell")[0].innerHTML = offline;
 		}
 		
 		table.appendChild(row);
@@ -100,9 +102,9 @@ function update_table() {
 }
 
 function load_server_json() {
-	console.log("Fetch servers.json");
+	console.log("Fetch tracker data");
 	fetchJSONFile(database_server + "tracker.json", function(data) {
-		console.log("Server data: ", data);
+		console.log("Tracker data: ", data);
 		g_server_data = data;
 		update_table();
 	});
@@ -116,7 +118,6 @@ function load_server_list() {
 	setInterval(function () {
 		if (!document.hidden) {
 			load_server_json();
-			init_page();
 		} else {
 			g_should_refresh_servers = true;
 			console.log("Tab not active. Not fetching.");
