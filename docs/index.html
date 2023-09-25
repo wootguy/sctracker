@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+	<header>
+		<title>SvenTracker</title>
+		<link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
+		<script type="text/javascript" src="sventracker.js"></script>
+		<style>
+			body {
+				max-width: 1450px;
+				margin: 0 auto;
+				background: #181818;
+				color: #ddd;
+				font-family: sans-serif;
+			}
+			h1, h2, h3 {
+				text-align: center;
+				margin-bottom: 20px;
+			}
+			.content {
+				text-align: center;
+			}
+			a:link {
+				color: #6baff8;
+			}
+			a:visited {
+				color: #6d7bc6;
+			}
+			table {
+				margin: 0 auto;
+				margin-bottom: 20px;
+				border-collapse: collapse; 
+			}
+			td, th {
+				border-bottom: 1px solid #777;
+				padding: 5px 10px;
+				margin: 0;
+			}
+			th {
+				border-top: 1px solid #777;
+			}
+			tr {
+				background-color: #222;
+				border-left: 1px solid #777;
+				border-right: 1px solid #777;
+			}
+			tr:nth-child(odd) {
+				background-color: #2B394E;
+			}
+			.hidden {
+				display: none;
+			}
+			.server-table {
+				font-family: "Trebuchet MS", Trebuchet, Tahoma, Arial, Helvetica, sans-serif;
+				font-size: 12px;
+			}
+			.unresponsive {
+				color: red;
+			}
+			td, th {
+				text-align: left;
+			}
+			.name-cell {
+				min-width: 400px;
+			}
+			.name-cell a:hover {
+				text-decoration: underline;
+				cursor: pointer;
+			}
+			.rank-cell, .players-cell {
+				text-align: right;
+			}
+			
+			.loader {
+				position: absolute;
+				left: 50%;
+				top: 50%;
+
+				color: #ffffff;
+				font-size: 16px;
+				width: 1em;
+				height: 1em;
+				border-radius: 50%;
+				text-indent: -9999em;
+				-webkit-animation: load4 0.5s infinite linear;
+				animation: load4 0.5s infinite linear;
+				-webkit-transform: translateZ(0);
+				-ms-transform: translateZ(0);
+				transform: translateZ(0);
+			}
+			@-webkit-keyframes load4 {
+			  0%,
+			  100% {
+				box-shadow: 0 -3em 0 0.2em, 2em -2em 0 0em, 3em 0 0 -1em, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 -1em, -3em 0 0 -1em, -2em -2em 0 0;
+			  }
+			  12.5% {
+				box-shadow: 0 -3em 0 0, 2em -2em 0 0.2em, 3em 0 0 0, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 -1em, -3em 0 0 -1em, -2em -2em 0 -1em;
+			  }
+			  25% {
+				box-shadow: 0 -3em 0 -0.5em, 2em -2em 0 0, 3em 0 0 0.2em, 2em 2em 0 0, 0 3em 0 -1em, -2em 2em 0 -1em, -3em 0 0 -1em, -2em -2em 0 -1em;
+			  }
+			  37.5% {
+				box-shadow: 0 -3em 0 -1em, 2em -2em 0 -1em, 3em 0em 0 0, 2em 2em 0 0.2em, 0 3em 0 0em, -2em 2em 0 -1em, -3em 0em 0 -1em, -2em -2em 0 -1em;
+			  }
+			  50% {
+				box-shadow: 0 -3em 0 -1em, 2em -2em 0 -1em, 3em 0 0 -1em, 2em 2em 0 0em, 0 3em 0 0.2em, -2em 2em 0 0, -3em 0em 0 -1em, -2em -2em 0 -1em;
+			  }
+			  62.5% {
+				box-shadow: 0 -3em 0 -1em, 2em -2em 0 -1em, 3em 0 0 -1em, 2em 2em 0 -1em, 0 3em 0 0, -2em 2em 0 0.2em, -3em 0 0 0, -2em -2em 0 -1em;
+			  }
+			  75% {
+				box-shadow: 0em -3em 0 -1em, 2em -2em 0 -1em, 3em 0em 0 -1em, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 0, -3em 0em 0 0.2em, -2em -2em 0 0;
+			  }
+			  87.5% {
+				box-shadow: 0em -3em 0 0, 2em -2em 0 -1em, 3em 0 0 -1em, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 0, -3em 0em 0 0, -2em -2em 0 0.2em;
+			  }
+			}
+			@keyframes load4 {
+			  0%,
+			  100% {
+				box-shadow: 0 -3em 0 0.2em, 2em -2em 0 0em, 3em 0 0 -1em, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 -1em, -3em 0 0 -1em, -2em -2em 0 0;
+			  }
+			  12.5% {
+				box-shadow: 0 -3em 0 0, 2em -2em 0 0.2em, 3em 0 0 0, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 -1em, -3em 0 0 -1em, -2em -2em 0 -1em;
+			  }
+			  25% {
+				box-shadow: 0 -3em 0 -0.5em, 2em -2em 0 0, 3em 0 0 0.2em, 2em 2em 0 0, 0 3em 0 -1em, -2em 2em 0 -1em, -3em 0 0 -1em, -2em -2em 0 -1em;
+			  }
+			  37.5% {
+				box-shadow: 0 -3em 0 -1em, 2em -2em 0 -1em, 3em 0em 0 0, 2em 2em 0 0.2em, 0 3em 0 0em, -2em 2em 0 -1em, -3em 0em 0 -1em, -2em -2em 0 -1em;
+			  }
+			  50% {
+				box-shadow: 0 -3em 0 -1em, 2em -2em 0 -1em, 3em 0 0 -1em, 2em 2em 0 0em, 0 3em 0 0.2em, -2em 2em 0 0, -3em 0em 0 -1em, -2em -2em 0 -1em;
+			  }
+			  62.5% {
+				box-shadow: 0 -3em 0 -1em, 2em -2em 0 -1em, 3em 0 0 -1em, 2em 2em 0 -1em, 0 3em 0 0, -2em 2em 0 0.2em, -3em 0 0 0, -2em -2em 0 -1em;
+			  }
+			  75% {
+				box-shadow: 0em -3em 0 -1em, 2em -2em 0 -1em, 3em 0em 0 -1em, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 0, -3em 0em 0 0.2em, -2em -2em 0 0;
+			  }
+			  87.5% {
+				box-shadow: 0em -3em 0 0, 2em -2em 0 -1em, 3em 0 0 -1em, 2em 2em 0 -1em, 0 3em 0 -1em, -2em 2em 0 0, -3em 0em 0 0, -2em -2em 0 0.2em;
+			  }
+			}
+		</style>
+	</header>
+
+	<body>
+		<h2>Sven Co-op Server Rankings</h2>
+		
+		<div class="content">			
+			<table class="server-table">
+				<tr>
+					<th>Rank</th><th>Server Name</th><th>Players</th><th>IP:Port</th><th>Map</th>
+				</tr>
+				
+				<tr class="row-template hidden">
+					<td class="rank-cell"></td>
+					<td class="name-cell"></td>
+					<td class="players-cell"></td>
+					<td class="addr-cell"></td>
+					<td class="map-cell"></td>
+				</tr>
+			</table>
+			
+			<div class="loader site-loader"></div>
+		</div>
+	</body>
+
+</html>

@@ -1,9 +1,15 @@
-    Get latest vcpkg source zip from https://github.com/microsoft/vcpkg/releases and extract it to a folder of your choice (e.g. C:\vcpkg\)
+WINDOWS:
+    Get latest vcpkg source zip from https://github.com/microsoft/vcpkg/releases
     
-    Open Developer Command Prompt for VS 20XX (see Windows Start menu or %PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs\Visual Studio 20XX\Visual Studio Tools\) and cd to C:\vcpkg\
+    Open Developer Command Prompt for VS 20XX (see Windows Start menu 
+    or %PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs\Visual Studio 20XX\Visual Studio Tools\)
+    and cd to your vcpkg folder (x64 prompt if you're building for x64)
     
-    Run bootstrap-vcpkg.bat
+    bootstrap-vcpkg.bat
+    vcpkg.exe integrate install
+    vcpkg.exe install curl
+    vcpkg.exe install curl:x64-windows
     
-    Run vcpkg.exe integrate install
     
-    Run vcpkg.exe install curl
+LINUX:
+apt install libcurl4-openssl-dev
