@@ -31,7 +31,7 @@ string serverInfoPath = "data/tracker.json"; // ordered list of server IDs by ra
 #ifdef DEBUG_MODE
 	#define SERVER_DEAD_SECONDS (60)
 	#define SERVER_UNREACHABLE_TIME (30)
-	#define STAT_WRITE_FREQ 5
+	#define STAT_WRITE_FREQ 10
 	#define RANK_FREQ 20
 #else
 	#define SERVER_DEAD_SECONDS (60*60*24*7) // seconds before a server is considered "dead" and its stats are archived
@@ -194,7 +194,7 @@ bool parseSteamServerJson(Value& json, ServerState& state) {
 }
 
 bool parseProgramServerJson(Value& json, ServerState& state) {
-	if (!(json.HasMember("name") && json.HasMember("flags") && json.HasMember("max_players"))) {
+	if (!(json.HasMember("name") && json.HasMember("flags") && json.HasMember("max_players") && json.HasMember("time"))) {
 		printf("Program json missing values\n");
 		return false;
 	}
@@ -203,6 +203,7 @@ bool parseProgramServerJson(Value& json, ServerState& state) {
 	state.name = json["name"].GetString();
 	state.maxPlayers = json["max_players"].GetUint();
 	state.flags = json["flags"].GetUint();
+	state.lastResponseTime = json["time"].GetUint();
 	// players/rank and other live data should be loaded/calculated soon
 	return true;
 }
@@ -363,7 +364,8 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 		return false;
 	}
 
-	state.lastResponseTime = state.lastWriteTime;
+	if (state.lastResponseTime == 0)
+		state.lastResponseTime = state.lastWriteTime;
 
 	// write unreachable stat at the same time as the last stat,
 	// which will be when the program was stopped
@@ -373,7 +375,7 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 		writeServerStat(state, 0, true, state.lastWriteTime);
 		state.players = 0;
 		g_writeStats.serversUpdated -= 1;
-		printf("append unreachable stat: %s\n", dispName.c_str());
+		printf("append unreachable stat (deadtime %us): %s\n", deadTime, dispName.c_str());
 	}
 	else {
 		//printf("Loaded server state: %s\n", dispName.c_str());
@@ -523,7 +525,7 @@ bool archiveStats(string serverId) {
 	return true;
 }
 
-void updateStats(Document& doc, Value& serverList) {
+void updateStats(Document& doc, Value& serverList, uint32_t now) {
 	int numServers = serverList.GetArray().Size();
 
 	set<string> updatedServers;
@@ -531,8 +533,6 @@ void updateStats(Document& doc, Value& serverList) {
 
 	g_writeStats.bytesWritten = 0;
 	g_writeStats.serversUpdated = 0;
-
-	uint32_t now = getEpochSeconds();
 
 	for (int i = 0; i < numServers; i++) {
 		ServerState newState;
@@ -838,8 +838,8 @@ int main(int argc, char** argv) {
 		}
 
 		updateStartTime = getEpochMillis();
-		updateStats(json, serverList);
-		saveServerInfos();
+		g_lastUpdateTime = getEpochSeconds();
+		updateStats(json, serverList, g_lastUpdateTime);
 
 		uint32_t nowSecs = getEpochSeconds();
 		if (nowSecs - g_lastRankTime > RANK_FREQ) {
@@ -851,7 +851,8 @@ int main(int argc, char** argv) {
 		}
 
 		printf("Updated %d/%d servers, wrote %d bytes\n", g_writeStats.serversUpdated, (int)g_servers.size(), g_writeStats.bytesWritten);
-		g_lastUpdateTime = getEpochSeconds();
+
+		saveServerInfos();
 
 		do {
 			writeCount++;
