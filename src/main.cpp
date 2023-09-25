@@ -632,20 +632,26 @@ void computeRanks() {
 			printf("Invalid stat file name: %s", fname.c_str());
 			continue;
 		}
+		if (g_servers.find(fname) == g_servers.end()) {
+			printf("Skip ranking untracked server: %s\n", fname.c_str());
+			continue;
+		}
 
 		ServerState state = ServerState();
 		state.init();
 		state.addr = fname;
-		if (g_servers.find(state.addr) != g_servers.end()) {
-			state.name = g_servers[state.addr].name;
-		}
+		state.name = g_servers[state.addr].name;
+
 		if (!loadServerHistory(state, now, false)) {
 			g_servers.erase(fname);
 			printf("File corruption: %s\n", fname.c_str());
 			continue;
 		}
-		if (state.rankSum > 0)
+
+		g_servers[state.addr].rankSum = state.rankSum;
+		if (state.rankSum > 0) {
 			rankedServers.push_back(state);
+		}
 	}
 
 	std::sort(rankedServers.begin(), rankedServers.end(), compareByRank);
