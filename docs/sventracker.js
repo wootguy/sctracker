@@ -149,16 +149,42 @@ function load_server_rankings() {
 	});
 }
 
+var g_should_refresh_servers = false;
+var g_should_refresh_rankings = false;
+
 function load_server_list() {
 	load_server_rankings();
 	setInterval(function () {
-		load_server_rankings();
+		if (!document.hidden) {
+			load_server_rankings();
+		} else {
+			g_should_refresh_rankings = true;
+			console.log("Tab not active. Not fetching.");
+		}
 	}, 1000*60*60);
 	
 	load_server_json();
 	setInterval(function () {
-		load_server_json();
+		if (!document.hidden) {
+			load_server_json();
+		} else {
+			g_should_refresh_servers = true;
+			console.log("Tab not active. Not fetching.");
+		}
 	}, 1000*60);
+	
+	setInterval(function () {
+		if (!document.hidden) {
+			if (g_should_refresh_rankings) {
+				g_should_refresh_rankings = false;
+				load_server_rankings();
+			}
+			if (g_should_refresh_servers) {
+				g_should_refresh_servers = false;
+				load_server_json();
+			}
+		}
+	}, 1000);
 }
 
 document.addEventListener("DOMContentLoaded",function() {
