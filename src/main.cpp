@@ -24,6 +24,7 @@ string dataPath = "data/";
 string statsPath = "data/stats/";
 string archivePath = "data/stats/archive/";
 string rankPath = "data/rankings.txt"; // ordered list of server IDs by rank
+string steamJsonPath = "data/servers.json"; // ordered list of server IDs by rank
 
 //#define DEBUG_MODE
 
@@ -623,7 +624,7 @@ void computeRanks() {
 			float avg = serv.rankSum / (float)TOTAL_RANK_DATA_POINTS;
 			printf("%2d) %.2f = %s\n", i+1, avg, dispName.c_str());
 		}
-		string line = to_string(serv.rankSum) + "=" + serv.addr + "\n";
+		string line = to_string(serv.rankSum) + "=" + serv.addr + "=" + serv.name + "\n";
 		fwrite(line.c_str(), line.size(), 1, file);
 	}
 
@@ -681,6 +682,19 @@ int main(int argc, char** argv) {
 		while (!getServerListJson(serverList, json)) {
 			this_thread::sleep_for(seconds(10));
 		}
+
+		FILE* jsonFile = fopen(steamJsonPath.c_str(), "wb");
+		if (jsonFile) {
+			string jsonString = stringifyJson(serverList);
+			if (!fwrite(jsonString.c_str(), jsonString.size(), 1, jsonFile)) {
+				printf("Failed to write json file\n");
+			}
+			fclose(jsonFile);
+		}
+		else {
+			printf("Failed to open json file: %s\n", steamJsonPath.c_str());
+		}
+		
 
 		uint64_t now = getEpochMillis();
 
