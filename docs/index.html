@@ -42,6 +42,10 @@
 				max-width: 1200px;
 			}
 			
+			.header-options {
+				padding-top: 10px;
+			}
+			
 			a:link {
 				color: #6baff8;
 			}
@@ -238,6 +242,14 @@
 			<div class="content">
 				<div class="header">
 					<h2>Sven Co-op Server Rankings</h2>
+					
+					<div class="header-options">
+						<input type="checkbox" id="filter_listen">
+						<label for="filter_listen" title="Listen servers are created by players via the Start Game option. These are usually created temporarily for friends/testing.">Show listen servers</label>
+						
+						<input type="checkbox" id="filter_offline" checked>
+						<label for="filter_offline" title="Show servers that have been offline for less than a week. Servers offline for longer than a week are removed from the ranking list.">Show offline servers</label>
+					</div>
 				</div>
 			
 				<table>

@@ -18,6 +18,10 @@ var g_useAvgData = false;
 var g_should_refresh_servers = false;
 var auto_refresh = true;
 
+const FL_SERVER_DEDICATED = 1;
+const FL_SERVER_SECURE = 2;
+const FL_SERVER_LINUX = 4;
+
 function fetchTextFile(path, callback) {
 	var httpRequest = new XMLHttpRequest();
 	httpRequest.onreadystatechange = function() {
@@ -333,6 +337,8 @@ function update_table() {
 	var table = document.getElementsByClassName("server-table")[0];
 	var row_template = document.getElementsByClassName("row-template")[0];
 	var expand_content_template = document.getElementsByClassName("server-content-row-template")[0];
+	var showListenServers = document.getElementById("filter_listen").checked;
+	var showOfflineServers = document.getElementById("filter_offline").checked;
 	
 	var reload_graph_keys = [];
 	
@@ -354,16 +360,26 @@ function update_table() {
 	
 	var updateTime = g_server_data["lastUpdateTime"];
 	
+	var addedRows = 0;
+	
 	for (var i = 0; i < g_server_list.length; i++) {
 		var key = g_server_list[i];
 		
+		if (!showListenServers && (servers[key].flags & FL_SERVER_DEDICATED) == 0) {
+			continue;
+		}
+		
 		var offlineTime = Math.round((updateTime - servers[key]["time"]) / 60);
 		
+		if (!showOfflineServers && offlineTime > 0) {
+			continue;
+		}
+		
 		var row = row_template.cloneNode(true);
-		var classodd = i % 2 ? "odd" : "even";
+		var classodd = addedRows % 2 ? "odd" : "even";
 		row.setAttribute("class", "row server-row " + key + " " + classodd);
 		row.setAttribute("serverid", key);
-		row.getElementsByClassName("rank-cell")[0].textContent = i+1;
+		row.getElementsByClassName("rank-cell")[0].textContent = addedRows+1;
 		row.getElementsByClassName("name-cell")[0].textContent = servers[key]["name"];
 		row.getElementsByClassName("addr-cell")[0].textContent = key.replace("_", ":");
 		
@@ -399,6 +415,8 @@ function update_table() {
 		content.setAttribute("class", "server-content-row " + key + " " + classodd);
 		content.setAttribute("key", key);
 		table.appendChild(content);
+		
+		addedRows++;
 	}
 	
 	console.log("Table updated");
@@ -526,4 +544,11 @@ document.addEventListener("DOMContentLoaded",function() {
 	for (var i = 0; i < timeControls.length; i++) {
 		timeControls[i].addEventListener("click", change_time_window);
 	}
+	
+	document.getElementById("filter_listen").onchange = function() {
+		update_table();
+	};
+	document.getElementById("filter_offline").onchange = function() {
+		update_table();
+	};
 });
