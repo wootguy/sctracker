@@ -4,6 +4,7 @@ var stats_avg_path = "stats/avg/";
 var g_server_data = null;
 var g_server_list = [];
 var g_server_stats = {};
+var g_data_cache = {};
 
 const FL_PCNT_TIME16 = 64;		// time delta is 16 bits and relative to the last stat
 const FL_PCNT_TIME32 = 128;		// time is a 32 bit absoulte value
@@ -302,16 +303,23 @@ function parseStatFile(serverid, dataView) {
 
 function fetch_graph(serverid) {
 	let datpath = database_server + (g_useAvgData ? stats_avg_path : stats_live_path) + serverid + ".dat";
-	console.log("Fetch " + datpath);
 	
-	fetchBinaryFile(datpath, function(data) {
-		if (data) {
-			parseStatFile(serverid, new DataView(data));
-			renderGraph(serverid);
-		} else {
-			console.error("Failed to fetch graph data");
-		}
-	});
+	if (datpath in g_data_cache) {
+		console.log("Use cached: " + datpath);
+		parseStatFile(serverid, g_data_cache[datpath]);
+		renderGraph(serverid);
+	} else {
+		console.log("Fetch: " + datpath);
+		fetchBinaryFile(datpath, function(data) {
+			if (data) {
+				g_data_cache[datpath] = new DataView(data);
+				parseStatFile(serverid, g_data_cache[datpath]);
+				renderGraph(serverid);
+			} else {
+				console.error("Failed to fetch graph data");
+			}
+		});
+	}	
 }
 
 function expand_server_row(serverid, redraw) {
@@ -424,7 +432,7 @@ function update_table() {
 	for (var i = 0; i < reload_graph_keys.length; i++) {
 		expand_server_row(reload_graph_keys[i], true);
 	}
-	refetch_charts();
+	refetch_charts(1000);
 	
 	var loader = document.getElementsByClassName("site-loader")[0];
 	loader.classList.remove("loader");
@@ -440,6 +448,7 @@ function load_server_json() {
 		//console.log("Tracker data: ", data);
 		console.log("Tracker data loaded");
 		g_server_data = data;
+		g_data_cache = {};
 		update_table();
 	});
 }
@@ -480,14 +489,14 @@ function handle_resize(event) {
 	redraw_charts();
 };
 
-function refetch_charts() {
+function refetch_charts(delay) {
 	var graphs = document.getElementsByClassName("server-content-row expanded");
 	for (var i = 0; i < graphs.length; i++) {
 		let serverid = graphs[i].getAttribute("key");
 		
 		setTimeout(function () {
 			fetch_graph(serverid);
-		}, 1000*i);
+		}, delay*i);
 	}
 }
 
@@ -516,7 +525,7 @@ function redraw_charts() {
 	}
 }
 
-function change_time_window() {	
+function change_time_window() {
 	var timebuts = document.getElementsByClassName("chart-time");
 	for (let i = 0; i < timebuts.length; i++) {
 		timebuts[i].classList.remove("active");
@@ -530,7 +539,7 @@ function change_time_window() {
 	
 	if (g_useAvgData != wasUsingAvg) {
 		g_server_stats = {};
-		refetch_charts();
+		refetch_charts(0);
 	} else {
 		reload_charts();
 	}
