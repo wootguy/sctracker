@@ -9,6 +9,7 @@
 #include <chrono>
 #include <stdio.h>
 #include <algorithm>
+#include <queue>
 
 using namespace std;
 using namespace rapidjson;
@@ -21,10 +22,17 @@ string appid = "225840"; // Sven Co-op
 //string filter = "\\appid\\" + appid + "\\dedicated\\1";
 string filter = "\\appid\\" + appid;
 string dataPath = "data/";
-string statsPath = "data/stats/";
-string archivePath = "data/stats/archive/";
+string statsPath = "data/stats/active/"; // entire stat history for actively tracked servers
+string liveDataPath = "data/stats/live/"; // most recent stats
+string avgDataPath = "data/stats/avg/"; // all stats but averaged for better speed/size
+string archivePath = "data/stats/archive/"; // old files that maybe should be deleted
+string rankHistoryPath = "data/stats/rank/"; // past server rankings
+string archiveRankPath = "data/stats/archive/rank/"; // archived because ranking formula may change
 string rankPath = "data/rankings.txt"; // ordered list of server IDs by rank
 string serverInfoPath = "data/tracker.json"; // ordered list of server IDs by rank
+
+const char* statFileMagicBytes = "SVTK";
+const char* rankFileMagicBytes = "SVRK";
 
 //#define DEBUG_MODE
 
@@ -45,6 +53,8 @@ string serverInfoPath = "data/tracker.json"; // ordered list of server IDs by ra
 #define RANK_STAT_INTERVAL 60 // gaps between rank data points
 #define TOTAL_RANK_DATA_POINTS ((RANK_STAT_MAX_AGE) / (RANK_STAT_INTERVAL))
 
+#define MAX_LIVE_STATS_AGE_RAW 60*60*24*30 // max number of raw stats written to live data for the web
+#define AVG_STAT_FILE_INTERVAL 60*60 // interval for averaged stats
 
 #pragma pack(push, 1)
 struct StatFileHeader {
@@ -58,7 +68,10 @@ struct StatFileHeader {
 #define PCNT_UNREACHABLE (PCNT_FL_MASK) // if both are set, the server is unreachable
 // if neither are set, time delta is 8-bits and relative to the last stat
 
-// bottom 6 bits are current player count
+#define FL_RANK_RANK16 64		// ranking is not a delta and so does not fit in this byte
+#define FL_RANK_TIME32 128		// time delta is 32 bits instead of 16
+#define FL_RANK_MASK (FL_RANK_RANK16|FL_RANK_TIME32)
+#define RANK_SIGN_BIT 32		// bit containing the sign of the delta
 
 #pragma pack(pop)
 
@@ -82,6 +95,10 @@ struct ServerState {
 	
 	string getStatFilePath();
 	string getStatArchiveFilePath();
+	string getLiveStatFilePath();
+	string getLiveAvgStatFilePath();
+	string getRankHistFilePath();
+	string getRankArchiveFilePath();
 	uint32_t secondsSinceLastResponse();
 	string displayName();
 	void init();
@@ -124,6 +141,22 @@ string ServerState::getStatFilePath() {
 
 string ServerState::getStatArchiveFilePath() {
 	return archivePath + addr + ".dat";
+}
+
+string ServerState::getLiveStatFilePath() {
+	return liveDataPath + addr + ".dat";
+}
+
+string ServerState::getLiveAvgStatFilePath() {
+	return avgDataPath + addr + ".dat";
+}
+
+string ServerState::getRankHistFilePath() {
+	return rankHistoryPath + addr + ".dat";
+}
+
+string ServerState::getRankArchiveFilePath() {
+	return archiveRankPath + addr + ".dat";
 }
 
 uint32_t ServerState::secondsSinceLastResponse() {
@@ -208,8 +241,8 @@ bool parseProgramServerJson(Value& json, ServerState& state) {
 	return true;
 }
 
-// false indicates a problem with the file
-bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) {
+// will unarchive the stat file if it exists, and validate the header
+FILE* loadStatFile(ServerState& state) {
 	string fpath = state.getStatFilePath();
 	string archivePath = state.getStatArchiveFilePath();
 
@@ -220,7 +253,7 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 		file = fopen(fpath.c_str(), "rb");
 		if (!file) {
 			printf("Failed to open stat file (%d): %s\n", errno, fpath.c_str());
-			return false;
+			return NULL;
 		}
 	}
 	else if (fileExists(archivePath)) {
@@ -228,21 +261,20 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 		errno = 0;
 		if (rename(archivePath.c_str(), fpath.c_str()) == -1) {
 			printf("Unarchive failed. Rename error %d: %s", errno, archivePath.c_str());
-			return false;
+			return NULL;
 		}
 
 		errno = 0;
 		file = fopen(fpath.c_str(), "rb");
 		if (!file) {
 			printf("Failed to open stat file (%d): %s\n", errno, archivePath.c_str());
-			return false;
+			return NULL;
 		}
 	}
 	else {
 		printf("Stat file does not exist for: %s\n", state.addr.c_str());
-		return false;
+		return NULL;
 	}
-	
 
 	StatFileHeader header;
 
@@ -250,21 +282,89 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 	if (!fread(&header, sizeof(StatFileHeader), 1, file)) {
 		printf("Failed to read stat file (error %d): %s\n", errno, fpath.c_str());
 		fclose(file);
-		return false;
+		return NULL;
 	}
 
 	if (header.version != STAT_FILE_VERSION) {
 		printf("Bad version %d in stat file: %s\n", header.version, fpath.c_str());
 		fclose(file);
-		return false;
+		return NULL;
 	}
 
-	if (strncmp(header.magic, "SVTK", 4)) {
+	if (strncmp(header.magic, statFileMagicBytes, 4)) {
 		string magic = string(header.magic, 4);
 		printf("Bad magic bytes '%s' in stat file: %s\n", magic.c_str(), fpath.c_str());
 		fclose(file);
-		return false;
+		return NULL;
 	}
+
+	return file;
+}
+
+// will unarchive the rank file if it exists, and validate the header
+FILE* loadRankFile(ServerState& state) {
+	string fpath = state.getRankHistFilePath();
+	string archivePath = state.getRankArchiveFilePath();
+
+	FILE* file = NULL;
+
+	if (fileExists(fpath)) {
+		errno = 0;
+		file = fopen(fpath.c_str(), "rb");
+		if (!file) {
+			printf("Failed to open rank file (%d): %s\n", errno, fpath.c_str());
+			return NULL;
+		}
+	}
+	else if (fileExists(archivePath)) {
+		printf("Unarchive rank file: %s\n", state.addr.c_str());
+		errno = 0;
+		if (rename(archivePath.c_str(), fpath.c_str()) == -1) {
+			printf("Unarchive rank failed. Rename error %d: %s", errno, archivePath.c_str());
+			return NULL;
+		}
+
+		errno = 0;
+		file = fopen(fpath.c_str(), "rb");
+		if (!file) {
+			printf("Failed to open rank file (%d): %s\n", errno, archivePath.c_str());
+			return NULL;
+		}
+	}
+	else {
+		printf("Rank file does not exist for: %s\n", state.addr.c_str());
+		return NULL;
+	}
+
+	StatFileHeader header;
+
+	errno = 0;
+	if (!fread(&header, sizeof(StatFileHeader), 1, file)) {
+		printf("Failed to read rank file (error %d): %s\n", errno, fpath.c_str());
+		fclose(file);
+		return NULL;
+	}
+
+	if (header.version != STAT_FILE_VERSION) {
+		printf("Bad version %d in rank file: %s\n", header.version, fpath.c_str());
+		fclose(file);
+		return NULL;
+	}
+
+	if (strncmp(header.magic, rankFileMagicBytes, 4)) {
+		string magic = string(header.magic, 4);
+		printf("Bad magic bytes '%s' in rank file: %s\n", magic.c_str(), fpath.c_str());
+		fclose(file);
+		return NULL;
+	}
+
+	return file;
+}
+
+
+// false indicates a problem with the file
+bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) {
+	FILE* file = loadStatFile(state);
 
 	string dispName = state.displayName();
 	//printf("History for %s\n", dispName.c_str());
@@ -384,6 +484,224 @@ bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) 
 	return true;
 }
 
+bool writeStatHeader(FILE* file, const char* magic, string fpath) {
+	StatFileHeader header;
+	header.version = STAT_FILE_VERSION;
+	memcpy(header.magic, magic, 4);
+
+	errno = 0;
+	if (!fwrite(&header, sizeof(StatFileHeader), 1, file)) {
+		printf("Failed to write to stat file header (error %d): %s\n", errno, fpath.c_str());
+		return false;
+	}
+
+	return true;
+}
+
+bool fwriteVerbose(const void* buffer, size_t sz, FILE* file, const char* desc) {
+	errno = 0;
+	if (!fwrite(buffer, sz, 1, file)) {
+		printf("Failed to write %s (error %d)\n", desc, errno);
+		return false;
+	}
+	return true;
+}
+
+uint8_t getDeltaFlags(uint32_t timeDelta) {
+	if (timeDelta > 65535) {
+		return FL_PCNT_TIME32;
+	}
+	else if (timeDelta > 255) {
+		return FL_PCNT_TIME16;
+	}
+	else {
+		return 0;
+	}
+}
+
+bool writeDelta(uint32_t timeFrom, uint32_t timeTo, FILE* file) {
+	uint32_t timeDelta = timeTo - timeFrom;
+	uint8_t flags = getDeltaFlags(timeDelta);
+
+	if (flags & FL_PCNT_TIME32) {
+		if (!fwriteVerbose(&timeTo, sizeof(uint32_t), file, "time delta")) {
+			return false;
+		}
+	}
+	else if (flags & FL_PCNT_TIME16) {
+		if (!fwriteVerbose(&timeDelta, sizeof(uint16_t), file, "time delta")) {
+			return false;
+		}
+	}
+	else {
+		if (!fwriteVerbose(&timeDelta, sizeof(uint8_t), file, "time delta")) {
+			return false;
+		}
+	}
+}
+
+bool writeLiveStatFiles(ServerState& state, uint32_t now) {
+	FILE* historyFile = loadStatFile(state);
+
+	string liveDataPath = state.getLiveStatFilePath();
+	string liveAvgDataPath = state.getLiveAvgStatFilePath();
+	FILE* liveFile = fopen(liveDataPath.c_str(), "wb");
+	FILE* avgFile = fopen(liveAvgDataPath.c_str(), "wb");
+
+	if (!liveFile || !avgFile || !historyFile) {
+		printf("Failed to write live/avg stats: %s\n", state.addr.c_str());
+		if (liveFile) {
+			fclose(liveFile);
+			remove(liveDataPath.c_str());
+		}
+		if (avgFile) {
+			fclose(avgFile);
+			remove(liveAvgDataPath.c_str());
+		}
+		if (historyFile) {
+			fclose(historyFile);
+		}
+		return false;
+	}
+
+	writeStatHeader(liveFile, statFileMagicBytes, liveDataPath);
+	writeStatHeader(avgFile, statFileMagicBytes, liveDataPath);
+
+	bool withinLiveStatRange = false;
+	uint32_t statTime = 0;
+
+	uint32_t numStatsPerAvg = AVG_STAT_FILE_INTERVAL / STAT_WRITE_FREQ;
+	uint32_t lastAvgStatWrite = 0;
+	uint32_t avgStatSum = 0;
+	uint32_t lastAvgStatTime = 0;
+	uint8_t lastPlayerCount = 0;
+
+	deque<uint8_t> avgHistory;
+	bool success = true;
+
+	while (1) {		
+		uint8_t stat;
+		if (!fread(&stat, sizeof(uint8_t), 1, historyFile)) {
+			break;
+		}
+		uint8_t flags = stat & PCNT_FL_MASK;
+		uint8_t playerCount = 0;
+
+		if (withinLiveStatRange && !fwriteVerbose(&stat, sizeof(uint8_t), liveFile, "live stat")) {
+			success = false;
+			break;
+		}
+
+		if ((stat & PCNT_FL_MASK) == PCNT_UNREACHABLE) {
+			flags = (stat << 2) & PCNT_FL_MASK;
+			if (stat & 0x0f) {
+				printf("Invalid flags in unreachable byte %X\n", (int)stat);
+			}
+		}
+		else {
+			playerCount = stat & ~PCNT_FL_MASK;
+			if (playerCount > 32) {
+				printf("Invalid player count\n");
+			}
+		}
+
+		if (flags & FL_PCNT_TIME32) {
+			if (!fread(&statTime, sizeof(uint32_t), 1, historyFile)) {
+				printf("Failed to read stat time\n");
+				success = false;
+				break;
+			}
+			if (withinLiveStatRange && !fwriteVerbose(&statTime, sizeof(uint32_t), liveFile, "live stat")) {
+				success = false;
+				break;
+			}
+		}
+		else if (flags & FL_PCNT_TIME16) {
+			uint16_t delta;
+			if (!fread(&delta, sizeof(uint16_t), 1, historyFile)) {
+				printf("Failed to read stat time\n");
+				success = false;
+				break;
+			}
+			if (withinLiveStatRange && !fwriteVerbose(&delta, sizeof(uint16_t), liveFile, "live stat")) {
+				success = false;
+				break;
+			}
+			statTime += delta;
+		}
+		else {
+			uint8_t delta;
+			if (!fread(&delta, sizeof(uint8_t), 1, historyFile)) {
+				printf("Failed to read stat time\n");
+				success = false;
+				break;
+			}
+			if (withinLiveStatRange && !fwriteVerbose(&delta, sizeof(uint8_t), liveFile, "live stat")) {
+				success = false;
+				break;
+			}
+			statTime += delta;
+		}
+
+		if (!withinLiveStatRange && statTime > now - MAX_LIVE_STATS_AGE_RAW) {
+			withinLiveStatRange = true;
+
+			// first stat should always write the full time
+			uint8_t firstStat = FL_PCNT_TIME32 | playerCount;
+			if ((stat & PCNT_FL_MASK) == PCNT_UNREACHABLE) {
+				firstStat = PCNT_UNREACHABLE | (FL_PCNT_TIME32 >> 2);
+			}
+
+			fwrite(&firstStat, sizeof(uint8_t), 1, liveFile);
+			fwrite(&statTime, sizeof(uint32_t), 1, liveFile);
+		}
+
+		// write averaged data
+		if (lastAvgStatTime == 0) {
+			lastAvgStatTime = statTime;
+		}
+		while (statTime > lastAvgStatTime) { // back-fill gaps
+			avgHistory.push_back(lastPlayerCount);
+			if (avgHistory.size() > numStatsPerAvg) {
+				avgHistory.pop_front();
+			}
+			lastAvgStatTime += RANK_STAT_INTERVAL;
+		}
+
+		uint32_t avgDelta = statTime - lastAvgStatWrite;
+		if (avgDelta >= AVG_STAT_FILE_INTERVAL && avgHistory.size() == numStatsPerAvg) {
+			uint8_t avgFlags = getDeltaFlags(avgDelta);
+
+			float total = 0;
+			for (uint8_t count : avgHistory) {
+				total += count;
+			}
+			total /= (float)avgHistory.size();
+
+			uint8_t avgCount = (uint8_t)(total + 0.5f);
+			if (avgCount > 32) {
+				printf("Impossible average: %d > 32\n", (int)avgCount);
+				avgCount = 0;
+			}
+
+			uint8_t avgStat = avgFlags | avgCount;
+
+			fwrite(&avgStat, sizeof(uint8_t), 1, avgFile);
+			writeDelta(lastAvgStatWrite, statTime, avgFile);
+
+			lastAvgStatWrite = statTime;
+		}
+
+		lastPlayerCount = playerCount;
+	}
+
+	fclose(historyFile);
+	fclose(liveFile);
+	fclose(avgFile);
+
+	return success;
+}
+
 bool createServerStatFile(ServerState& newState) {
 	string dispName = newState.displayName();
 	printf("New server: %s\n", dispName.c_str());
@@ -401,14 +719,7 @@ bool createServerStatFile(ServerState& newState) {
 		return false;
 	}
 
-	StatFileHeader header;
-	header.version = STAT_FILE_VERSION;
-	memcpy(header.magic, "SVTK", 4);
-
-	if (!fwrite(&header, sizeof(StatFileHeader), 1, file)) {
-		printf("Failed to write to stat file: %s\n", fpath.c_str());
-		return false;
-	}
+	writeStatHeader(file, statFileMagicBytes, fpath);
 
 	g_writeStats.bytesWritten += sizeof(StatFileHeader);
 	newState.players = 255; // force a stat write
@@ -492,8 +803,27 @@ bool writeServerStat(ServerState& state, int newPlayerCount, bool unreachable, u
 	state.lastWriteTime = now;
 	state.unreachable = unreachable;
 
+	writeLiveStatFiles(state, now);
+
 	g_writeStats.serversUpdated++;
 	return true;
+}
+
+bool archiveFile(string src, string dst) {
+	if (fileExists(dst)) {
+		printf("Archive failed. Destination exists: %s\n", dst.c_str());
+		return false;
+	}
+	else if (!fileExists(src)) {
+		printf("Archive failed. Source file missing: %s\n", src.c_str());
+		return false;
+	}
+
+	errno = 0;
+	if (rename(src.c_str(), dst.c_str()) == -1) {
+		printf("Archive failed. Rename error %d: %s\n", errno, src.c_str());
+		return false;
+	}
 }
 
 bool archiveStats(string serverId) {
@@ -502,23 +832,19 @@ bool archiveStats(string serverId) {
 		return false;
 	}
 	ServerState& state = g_servers[serverId];
-	string srcPath = state.getStatFilePath();
-	string dstPath = state.getStatArchiveFilePath();
 
-	if (fileExists(dstPath)) {
-		printf("Archive failed. Destination exists: %s\n", dstPath.c_str());
+	if (!archiveFile(state.getStatFilePath(), state.getStatArchiveFilePath())) {
 		return false;
 	}
-	else if (!fileExists(srcPath)) {
-		printf("Archive failed. Source file missing: %s\n", srcPath.c_str());
+	if (!archiveFile(state.getRankHistFilePath(), state.getRankArchiveFilePath())) {
 		return false;
 	}
 
-	errno = 0;
-	if (rename(srcPath.c_str(), dstPath.c_str()) == -1) {
-		printf("Archive failed. Rename error %d: %s\n", errno, srcPath.c_str());
-		return false;
-	}
+	// these files can be re-generated lated
+	string livePath = state.getLiveStatFilePath();
+	string avgPath = state.getLiveAvgStatFilePath();
+	remove(livePath.c_str());
+	remove(avgPath.c_str());
 	
 	printf("Archived server: %s\n", serverId.c_str());
 
@@ -615,6 +941,169 @@ bool compareByRank(const ServerState& a, const ServerState& b)
 	return a.rankSum > b.rankSum;
 }
 
+bool loadRankHistory(ServerState& state, uint16_t& lastRank, uint32_t& lastRankWriteTime, uint32_t now) {
+	FILE* file = loadRankFile(state);
+
+	if (!file) {
+		return false;
+	}
+
+	lastRank = 0;
+	lastRankWriteTime = 0;
+
+	while (1) {
+		uint8_t rankChange;
+		if (!fread(&rankChange, sizeof(uint8_t), 1, file)) {
+			break;
+		}
+		uint8_t flags = rankChange & FL_RANK_MASK;
+		uint8_t rankDelta = rankChange & ~FL_RANK_MASK;
+
+		if (flags & FL_RANK_RANK16) {
+			if (rankDelta) {
+				printf("Invalid rank bits in 16bit delta\n");
+				fclose(file);
+				return false;
+			}
+			if (!fread(&lastRank, sizeof(uint16_t), 1, file)) {
+				printf("Failed to read rank\n");
+				fclose(file);
+				return false;
+			}
+		}
+		else {
+			if (rankDelta & RANK_SIGN_BIT) {
+				uint8_t rankSub = rankDelta & ~RANK_SIGN_BIT;
+				if (rankSub > lastRank) {
+					printf("Invalid new rank: %d\n", (int)lastRank - (int)rankSub);
+					fclose(file);
+					return false;
+				}
+				lastRank -= rankSub;
+			}
+			else {
+				if ((int)lastRank + (int)rankDelta > 65535) {
+					printf("Invalid new rank: %d\n", (int)lastRank + (int)rankDelta);
+					fclose(file);
+					return false;
+				}
+				lastRank += rankDelta;
+			}
+		}
+
+		if (flags & FL_RANK_TIME32) {
+			if (!fread(&lastRankWriteTime, sizeof(uint32_t), 1, file)) {
+				printf("Failed to read rank time\n");
+				fclose(file);
+				return false;
+			}
+		}
+		else {
+			uint16_t delta;
+			if (!fread(&delta, sizeof(uint16_t), 1, file)) {
+				printf("Failed to read rank time delta\n");
+				fclose(file);
+				return false;
+			}
+			lastRankWriteTime += delta;
+		}
+	}
+
+	fclose(file);
+
+	if (lastRankWriteTime > now) {
+		printf("Invalid rank time parsed: %u\n", lastRankWriteTime);
+		return false;
+	}
+
+	return true;
+}
+
+bool writeRankFile(ServerState& state, uint16_t rank, uint32_t now) {
+	string fpath = state.getRankHistFilePath();
+
+	FILE* file = NULL;
+	uint16_t lastRank = 0;
+	uint32_t lastRankWriteTime = 0;
+
+	bool createdNewFile = false;
+
+	if (!fileExists(fpath)) {
+		errno = 0;
+		file = fopen(fpath.c_str(), "wb");
+		if (!file) {
+			printf("Failed to create rank file (error %d): %s\n", errno, fpath.c_str());
+			return false;
+		}
+		if (!writeStatHeader(file, rankFileMagicBytes, fpath)) {
+			printf("Failed to write rank file header: %s\n", fpath.c_str());
+			fclose(file);
+			return false;
+		}
+		createdNewFile = true;
+	}
+	else {
+		if (!loadRankHistory(state, lastRank, lastRankWriteTime, now)) {
+			printf("Failed to load rank history: %s\n", fpath.c_str());
+			return false;
+		}
+
+		file = fopen(fpath.c_str(), "ab");
+		if (!file) {
+			printf("Failed to append rank file: %s\n", fpath.c_str());
+			return false;
+		}
+	}
+
+	if (rank == lastRank && !createdNewFile) {
+		fclose(file);
+		return true; // no delta to write
+	}
+
+	uint8_t rankByte = 0;
+	int rankDelta = (int)rank - (int)lastRank;
+
+	if (rankDelta > 31 || rankDelta < -32 || createdNewFile) {
+		rankByte |= FL_RANK_RANK16;
+	}
+	else {
+		rankByte = rankDelta & ~FL_RANK_MASK;
+	}
+
+	if (now - lastRankWriteTime > 65535 || createdNewFile) {
+		rankByte |= FL_RANK_TIME32;
+	}
+
+	if (!fwriteVerbose(&rankByte, sizeof(uint8_t), file, "rank delta")) {
+		fclose(file);
+		return false;
+	}
+
+	if (rankByte & FL_RANK_RANK16) {
+		if (!fwriteVerbose(&rank, sizeof(uint16_t), file, "rank bytes")) {
+			fclose(file);
+			return false;
+		}
+	}
+	if (rankByte & FL_RANK_TIME32) {
+		if (!fwriteVerbose(&now, sizeof(uint32_t), file, "rank time")) {
+			fclose(file);
+			return false;
+		}
+	}
+	else {
+		uint16_t delta = now - lastRankWriteTime;
+		if (!fwriteVerbose(&delta, sizeof(uint16_t), file, "rank time")) {
+			fclose(file);
+			return false;
+		}
+	}
+
+	fclose(file);
+
+	return true;
+}
+
 void computeRanks() {
 	vector<string> statFiles = getDirFiles(statsPath, "dat", "");
 
@@ -649,9 +1138,8 @@ void computeRanks() {
 		}
 
 		g_servers[state.addr].rankSum = state.rankSum;
-		if (state.rankSum > 0) {
-			rankedServers.push_back(state);
-		}
+
+		rankedServers.push_back(state);
 	}
 
 	std::sort(rankedServers.begin(), rankedServers.end(), compareByRank);
@@ -659,6 +1147,11 @@ void computeRanks() {
 	printf("Server ranks:\n");
 	for (int i = 0; i < rankedServers.size(); i++) {
 		ServerState& serv = rankedServers[i];
+
+		// zero means no players ever joined during the ranking period
+		uint16_t writeRank = serv.rankSum ? i+1 : 0;
+		writeRankFile(serv, writeRank, now);
+
 		if (i < 10) {
 			string dispName = serv.displayName();
 			float avg = serv.rankSum / (float)TOTAL_RANK_DATA_POINTS;
@@ -793,7 +1286,7 @@ bool loadServerInfos() {
 
 int main(int argc, char** argv) {
 	if (!dirExists(dataPath) && !createDir(dataPath)) {
-		printf("Failed to create folder: %s\n", statsPath.c_str());
+		printf("Failed to create folder: %s\n", dataPath.c_str());
 		return 0;
 	}
 	if (!dirExists(statsPath) && !createDir(statsPath)) {
@@ -802,6 +1295,22 @@ int main(int argc, char** argv) {
 	}
 	if (!dirExists(archivePath) && !createDir(archivePath)) {
 		printf("Failed to create folder: %s\n", archivePath.c_str());
+		return 0;
+	}
+	if (!dirExists(liveDataPath) && !createDir(liveDataPath)) {
+		printf("Failed to create folder: %s\n", liveDataPath.c_str());
+		return 0;
+	}
+	if (!dirExists(avgDataPath) && !createDir(avgDataPath)) {
+		printf("Failed to create folder: %s\n", avgDataPath.c_str());
+		return 0;
+	}
+	if (!dirExists(rankHistoryPath) && !createDir(rankHistoryPath)) {
+		printf("Failed to create folder: %s\n", rankHistoryPath.c_str());
+		return 0;
+	}
+	if (!dirExists(archiveRankPath) && !createDir(archiveRankPath)) {
+		printf("Failed to create folder: %s\n", archiveRankPath.c_str());
 		return 0;
 	}
 	
@@ -853,7 +1362,7 @@ int main(int argc, char** argv) {
 			uint64_t start = getEpochMillis();
 			g_writeStats.bytesRead = 0;
 			computeRanks();
-			printf("Computed ranks in %.2fs, %.1f MB read\n", (getEpochMillis() - start) / 1000.0f, g_writeStats.bytesRead / (1024.0f*1024.0f));
+			printf("Updated ranks in %.2fs, %.1f MB read\n", (getEpochMillis() - start) / 1000.0f, g_writeStats.bytesRead / (1024.0f*1024.0f));
 		}
 
 		printf("Updated %d/%d servers, wrote %d bytes\n", g_writeStats.serversUpdated, (int)g_servers.size(), g_writeStats.bytesWritten);
