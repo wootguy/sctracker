@@ -6,52 +6,139 @@
 		<script type="text/javascript" src="sventracker.js"></script>
 		<style>
 			body {
-				max-width: 1450px;
-				margin: 0 auto;
 				background: #181818;
 				color: #ddd;
 				font-family: sans-serif;
+				margin: 0;
+			}
+			.content-container {
+				margin: 0 auto;				
+				padding: 0;
+				overflow-y: scroll;
 			}
 			h1, h2, h3 {
 				text-align: center;
-				margin-bottom: 20px;
+				padding: 0px 0;
+				margin: 0;
+			}
+			.header {
+				padding: 20px 0;
 			}
 			.content {
 				text-align: center;
+				padding: 0 40px;
+				margin: 0 auto;
+				max-width: 1450px;
 			}
+			.content table {
+				width: 100%;
+				margin: 0 auto;
+				margin-bottom: 20px;
+				border-collapse: collapse;
+				font-family: "Trebuchet MS", Trebuchet, Tahoma, Arial, Helvetica, sans-serif;
+				font-size: 12px;
+			}
+			.content table, .chart-controls {
+				max-width: 1200px;
+			}
+			
 			a:link {
 				color: #6baff8;
 			}
 			a:visited {
 				color: #6d7bc6;
 			}
-			table {
-				margin: 0 auto;
-				margin-bottom: 20px;
-				border-collapse: collapse; 
-			}
 			td, th {
-				border-bottom: 1px solid #777;
 				padding: 5px 10px;
 				margin: 0;
 			}
 			th {
-				border-top: 1px solid #777;
+				border-bottom: 1px solid #777;
 			}
-			tr {
+			.row {
 				background-color: #222;
-				border-left: 1px solid #777;
-				border-right: 1px solid #777;
+				vertical-align: top;
 			}
-			tr:nth-child(odd) {
+			.row.odd {
 				background-color: #2B394E;
 			}
-			.hidden {
+			.server-row.odd:hover {
+				cursor: pointer;
+				background: #3B495E;
+			}
+			.server-row:hover {
+				cursor: pointer;
+				background: #333;
+			}
+			.row.expanded {
+				border-bottom: 0;
+			}
+			
+			.server-content {
+				background: none;
+				padding: 0;
+				border: 0;
+			}
+			.server-content-row {
+				display: none;
+				background: #000;
+			}
+			.server-content-row.expanded {
+				display: table-row;
+			}
+			.server-content-row.expanded td {
+				height: 150px;
+			}
+			.server-content-row svg {
 				display: none;
 			}
-			.server-table {
-				font-family: "Trebuchet MS", Trebuchet, Tahoma, Arial, Helvetica, sans-serif;
-				font-size: 12px;
+			.server-content-row.expanded svg {
+				display: inline-block;
+				margin: 10px;
+			}
+			
+			.fixed-controls {
+				position: fixed;
+				bottom: 0;
+				left: 0;
+				background: #222;
+				width: 100%;
+				margin: 0;
+			}
+			.chart-controls {
+				padding: 15px;
+				margin: 0 auto;
+			}
+			.chart-time, .chart-sma {
+				padding: 5px 5px;
+				background: #222;
+				border: 1px solid #333;
+			}
+			.chart-time:hover, .chart-sma:hover {
+				cursor: pointer;
+				background: #333;
+			}
+			.chart-time.active, .chart-sma.active {
+				background: #0074d9;
+			}
+			.time-controls, .sma-controls {
+				display: inline-block;
+			}
+			.time-controls {
+				margin-left: 5px;
+			}
+			.sma-controls {
+				float: right;
+				margin-right: 10px;
+			}
+			
+			.chart text {
+				dominant-baseline: mathematical;
+				text-anchor: end;
+			}
+			
+			.hidden {
+				display: none;
 			}
 			.unresponsive {
 				color: red;
@@ -60,11 +147,13 @@
 				text-align: left;
 			}
 			.name-cell {
-				min-width: 400px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+				min-width: 100px;
 			}
-			.name-cell a:hover {
-				text-decoration: underline;
-				cursor: pointer;
+			.name-cell a {
+				max-width: 400px;
 			}
 			.rank-cell, .players-cell {
 				text-align: right;
@@ -145,25 +234,76 @@
 	</header>
 
 	<body>
-		<h2>Sven Co-op Server Rankings</h2>
-		
-		<div class="content">			
-			<table class="server-table">
-				<tr>
-					<th title="Rankings are calculated by summing player counts for each minute in the past 2 weeks. Servers with high average player counts but low peaks will generally rank higher than servers that are full every day but only for an hour or so.">Rank</th>
-					<th>Server Name</th><th>Players</th><th>IP:Port</th><th>Map</th>
-				</tr>
-				
-				<tr class="row-template hidden">
-					<td class="rank-cell"></td>
-					<td class="name-cell"></td>
-					<td class="players-cell"></td>
-					<td class="addr-cell"></td>
-					<td class="map-cell"></td>
-				</tr>
-			</table>
+		<div class ="content-container">
+			<div class="content">
+				<div class="header">
+					<h2>Sven Co-op Server Rankings</h2>
+				</div>
 			
-			<div class="loader site-loader"></div>
+				<table>
+					<tbody class="server-table">
+					</tbody>
+				</table>
+				
+				<table class="hidden">
+					<tbody>
+						<tr class="header-row row odd">
+							<th title="Rankings are calculated by summing player counts for each minute in the past 2 weeks. Servers with high average player counts but low peaks will generally rank higher than servers that are full every day but only for an hour or so.">Rank</th>
+							<th>Server Name</th><th>Players</th><th>IP:Port</th><th>Map</th>
+						</tr>
+						
+						<tr class="server-content-row-template hidden">
+							<td class="server-content" colspan="100%">
+								<svg class="chart" width="0" height="150" viewBox="0 -150 500 150">
+									<g transform="scale(1, -1)">
+										<g class="chartg"></g>
+									</g>
+								</svg>
+							</td>
+						</tr>
+						
+						<tr class="row row-template hidden">
+							<td class="rank-cell"></td>
+							<td class="name-cell"></td>
+							<td class="players-cell"></td>
+							<td class="addr-cell"></td>
+							<td class="map-cell"></td>
+						</tr>
+					</tbody>
+				</table>
+				
+				<div class="loader site-loader"></div>
+			</div>
+		</div>
+		
+		<div class="fixed-controls">
+			<div class="chart-controls">
+				<div class="time-controls">
+					<span class="chart-controls-label" title="How much history to view">Time window:</span>
+					<span class="chart-time" minutes="60" title="1 hour time window">1h</span>
+					<span class="chart-time" minutes="480" title="4 hour time window">8h</span>
+					<span class="chart-time" minutes="1440" title="24 hour time window">24h</span>
+					<span class="chart-time" minutes="2880" title="2 day time window">2d</span>
+					<span class="chart-time" minutes="5760" title="4 day time window">4d</span>
+					<span class="chart-time active" minutes="10080" title="7 day time window">7d</span>
+					<span class="chart-time" minutes="20160" title="14 day time window">14d</span>
+					<span class="chart-time" minutes="43200" title="30 day time window">30d</span>
+					<span class="chart-time" minutes="129600" title="3 month time window">3mo</span>
+					<span class="chart-time" minutes="259200" title="6 month time window">6mo</span>
+					<span class="chart-time" minutes="518400" title="1 year time window">1yr</span>
+					<!--<span class="chart-time" minutes="0" title="View entire stat history">All</span>-->
+				</div>
+				<!--
+				<div class="sma-controls">
+					<span class="chart-controls-label" title="Simple moving averages (smooths out the graph)">SMAs:</span>
+					<span class="chart-sma active" minutes="Raw" title="Raw datapoints (no averaging)">Raw</span>
+					<span class="chart-sma active" minutes="1d" title="1 day moving average">1d</span>
+					<span class="chart-sma" minutes="7d" title="7 day moving average">7d</span>
+					<span class="chart-sma" minutes="1mo" title="1 month moving average">1mo</span>
+					<span class="chart-sma" minutes="6mo" title="6 month moving average">6mo</span>
+				</div>
+				-->
+			</div>
 		</div>
 	</body>
 
