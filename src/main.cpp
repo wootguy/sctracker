@@ -836,9 +836,7 @@ bool archiveStats(string serverId) {
 	if (!archiveFile(state.getStatFilePath(), state.getStatArchiveFilePath())) {
 		return false;
 	}
-	if (!archiveFile(state.getRankHistFilePath(), state.getRankArchiveFilePath())) {
-		return false;
-	}
+	archiveFile(state.getRankHistFilePath(), state.getRankArchiveFilePath());
 
 	// these files can be re-generated lated
 	string livePath = state.getLiveStatFilePath();
@@ -972,23 +970,17 @@ bool loadRankHistory(ServerState& state, uint16_t& lastRank, uint32_t& lastRankW
 			}
 		}
 		else {
+			int8_t rankSigned = rankDelta;
 			if (rankDelta & RANK_SIGN_BIT) {
-				uint8_t rankSub = rankDelta & ~RANK_SIGN_BIT;
-				if (rankSub > lastRank) {
-					printf("Invalid new rank: %d\n", (int)lastRank - (int)rankSub);
-					fclose(file);
-					return false;
-				}
-				lastRank -= rankSub;
+				rankSigned |= FL_RANK_MASK; // sign extension to fit the int8
 			}
-			else {
-				if ((int)lastRank + (int)rankDelta > 65535) {
-					printf("Invalid new rank: %d\n", (int)lastRank + (int)rankDelta);
-					fclose(file);
-					return false;
-				}
-				lastRank += rankDelta;
+			int newRank = (int)lastRank + (int)rankSigned;
+			if (newRank < 0 || newRank > 65535) {
+				printf("Invalid new rank: %d\n", newRank);
+				fclose(file);
+				return false;
 			}
+			lastRank = newRank;
 		}
 
 		if (flags & FL_RANK_TIME32) {
