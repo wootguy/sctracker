@@ -11,6 +11,11 @@
 #include <Windows.h>
 #include <direct.h>
 #define GetCurrentDir _getcwd
+#ifdef WIN32
+#include <io.h>
+#define F_OK 0
+#define access _access
+#endif
 #else
 #include <time.h>
 #include <unistd.h>
@@ -57,12 +62,7 @@ string replaceString(string subject, string search, string replace) {
 }
 
 bool fileExists(string path) {
-	if (FILE* file = fopen(path.c_str(), "r"))
-	{
-		fclose(file);
-		return true;
-	}
-	return false;
+	return access(path.c_str(), F_OK) == 0;
 }
 
 size_t writeFunction(void* ptr, size_t size, size_t nmemb, std::string* data) {

@@ -19,17 +19,15 @@ string server = "https://api.steampowered.com/";
 string api = "IGameServersService/GetServerList/v1";
 string apikey = "";
 string appid = "225840"; // Sven Co-op
-//string filter = "\\appid\\" + appid + "\\dedicated\\1";
-string filter = "\\appid\\" + appid;
+string filter = "\\appid\\" + appid + "\\dedicated\\1";
 string dataPath = "data/";
 string statsPath = "data/stats/active/"; // entire stat history for actively tracked servers
 string liveDataPath = "data/stats/live/"; // most recent stats
 string avgDataPath = "data/stats/avg/"; // all stats but averaged for better speed/size
-string archivePath = "data/stats/archive/"; // old files that maybe should be deleted
+string archivePath = "data/stats/archive/"; // stats for dead servers that maybe should be deleted
 string rankHistoryPath = "data/stats/rank/"; // past server rankings
 string archiveRankPath = "data/stats/archive/rank/"; // archived because ranking formula may change
-string rankPath = "data/rankings.txt"; // ordered list of server IDs by rank
-string serverInfoPath = "data/tracker.json"; // ordered list of server IDs by rank
+string serverInfoPath = "data/tracker.json"; // current server/tracker status
 
 const char* statFileMagicBytes = "SVTK";
 const char* rankFileMagicBytes = "SVRK";
@@ -37,10 +35,12 @@ const char* rankFileMagicBytes = "SVRK";
 //#define DEBUG_MODE
 
 #ifdef DEBUG_MODE
-	#define SERVER_DEAD_SECONDS (60)
-	#define SERVER_UNREACHABLE_TIME (30)
+	//#define SERVER_DEAD_SECONDS (60)
+	//#define SERVER_UNREACHABLE_TIME (30)
+	#define SERVER_DEAD_SECONDS (60*60*24*7)
+	#define SERVER_UNREACHABLE_TIME (60*60)
 	#define STAT_WRITE_FREQ 10
-	#define RANK_FREQ 20
+	#define RANK_FREQ 10
 #else
 	#define SERVER_DEAD_SECONDS (60*60*24*7) // seconds before a server is considered "dead" and its stats are archived
 	#define SERVER_UNREACHABLE_TIME (60*5) // write unreachable stat after this time
@@ -59,7 +59,7 @@ const char* rankFileMagicBytes = "SVRK";
 #pragma pack(push, 1)
 struct StatFileHeader {
 	uint32_t version;
-	char magic[4]; // "SVTK"
+	char magic[4]; // "SVTK" for stat files or "SVRK" for ranking files 
 };
 
 #define FL_PCNT_TIME16 64		// time delta is 16 bits and relative to the last stat
@@ -92,6 +92,7 @@ struct ServerState {
 	uint32_t lastWriteTime; // last time a player count stat was written (epoch seconds)
 	uint32_t lastResponseTime; // last time data was received for this server
 	uint32_t rankSum; // sum of player counts over rankDataPoints data points
+	int lastRank; // last rank written to file
 	
 	string getStatFilePath();
 	string getStatArchiveFilePath();
@@ -116,6 +117,7 @@ void ServerState::init() {
 	maxPlayers = 0;
 	bots = 0;
 	rankSum = 0;
+	lastRank = -1;
 }
 
 struct WriteStats {
@@ -682,6 +684,8 @@ bool writeLiveStatFiles(ServerState& state, uint32_t now) {
 			if (avgCount > 32) {
 				printf("Impossible average: %d > 32\n", (int)avgCount);
 				avgCount = 0;
+				success = false;
+				break;
 			}
 
 			uint8_t avgStat = avgFlags | avgCount;
@@ -698,6 +702,11 @@ bool writeLiveStatFiles(ServerState& state, uint32_t now) {
 	fclose(historyFile);
 	fclose(liveFile);
 	fclose(avgFile);
+
+	if (!success) {
+		remove(liveDataPath.c_str());
+		remove(liveAvgDataPath.c_str());
+	}
 
 	return success;
 }
@@ -838,7 +847,7 @@ bool archiveStats(string serverId) {
 	}
 	archiveFile(state.getRankHistFilePath(), state.getRankArchiveFilePath());
 
-	// these files can be re-generated lated
+	// these files can be re-generated later
 	string livePath = state.getLiveStatFilePath();
 	string avgPath = state.getLiveAvgStatFilePath();
 	remove(livePath.c_str());
@@ -1136,13 +1145,21 @@ void computeRanks() {
 
 	std::sort(rankedServers.begin(), rankedServers.end(), compareByRank);
 
+	int totalUpdates = 0;
 	printf("Server ranks:\n");
 	for (int i = 0; i < rankedServers.size(); i++) {
 		ServerState& serv = rankedServers[i];
 
 		// zero means no players ever joined during the ranking period
 		uint16_t writeRank = serv.rankSum ? i+1 : 0;
-		writeRankFile(serv, writeRank, now);
+		int& lastRank = g_servers[serv.addr].lastRank;
+		
+		if (lastRank == -1 || writeRank != lastRank) {
+			writeRankFile(serv, writeRank, now);
+			totalUpdates++;
+		}
+
+		lastRank = writeRank;
 
 		if (i < 10) {
 			string dispName = serv.displayName();
@@ -1150,6 +1167,8 @@ void computeRanks() {
 			printf("%2d) %.2f = %s\n", i+1, avg, dispName.c_str());
 		}
 	}
+
+	printf("Updated %d/%d rank files\n", totalUpdates, (int)rankedServers.size());
 }
 
 void cleanupServerListJson(Document& doc, Value& serverList) {
@@ -1262,6 +1281,18 @@ bool loadServerInfos() {
 			if (!archiveStats(fname)) {
 				return false;
 			}
+			g_servers.erase(fname);
+			continue;
+		}
+
+		if ((state.flags & FL_SERVER_DEDICATED) == 0) {
+			printf("Delete listen server: %s\n", fname.c_str());
+			remove(state.getLiveStatFilePath().c_str());
+			remove(state.getLiveAvgStatFilePath().c_str());
+			remove(state.getRankArchiveFilePath().c_str());
+			remove(state.getStatArchiveFilePath().c_str());
+			remove(state.getRankHistFilePath().c_str());
+			remove(state.getStatFilePath().c_str());
 			g_servers.erase(fname);
 			continue;
 		}
