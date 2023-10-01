@@ -341,12 +341,11 @@ function expand_server_row(serverid, redraw) {
 
 function update_table() {
 	var servers = g_server_data["servers"];
-	var header_row = document.getElementsByClassName("header-row")[0];
-	var table = document.getElementsByClassName("server-table")[0];
+	var table_body = document.getElementsByClassName("server-table-body")[0];
 	var row_template = document.getElementsByClassName("row-template")[0];
 	var expand_content_template = document.getElementsByClassName("server-content-row-template")[0];
-	var showListenServers = document.getElementById("filter_listen").checked;
 	var showOfflineServers = document.getElementById("filter_offline").checked;
+	var hideCollapsedServers = document.getElementById("filter_collapsed").checked;
 	
 	var reload_graph_keys = [];
 	
@@ -357,8 +356,14 @@ function update_table() {
 		}
 	}
 	
-	table.textContent = "";
-	table.appendChild(header_row);
+	if (reload_graph_keys.length == 0) {
+		document.getElementById("filter_collapsed").disabled = true;
+		hideCollapsedServers = false;
+	} else {
+		document.getElementById("filter_collapsed").disabled = false;
+	}
+	
+	table_body.textContent = "";
 	
 	g_server_list = [];
 	for (let key in servers) {
@@ -373,13 +378,14 @@ function update_table() {
 	for (var i = 0; i < g_server_list.length; i++) {
 		var key = g_server_list[i];
 		
-		if (!showListenServers && (servers[key].flags & FL_SERVER_DEDICATED) == 0) {
-			continue;
-		}
-		
 		var offlineTime = Math.round((updateTime - servers[key]["time"]) / 60);
 		
 		if (!showOfflineServers && offlineTime > 0) {
+			continue;
+		}
+		
+		if (hideCollapsedServers && reload_graph_keys.indexOf(key) == -1) {
+			addedRows++;
 			continue;
 		}
 		
@@ -412,17 +418,18 @@ function update_table() {
 				if (document.getElementsByClassName("server-content-row expanded").length >= 50) {
 					alert("50 graphs max. Close the other ones.");
 				} else {
+					document.getElementById("filter_collapsed").disabled = false;
 					expand_server_row(serverid, true);
 				}
 			}
 		});
 		
-		table.appendChild(row);
+		table_body.appendChild(row);
 		
 		var content = expand_content_template.cloneNode(true);
 		content.setAttribute("class", "server-content-row " + key + " " + classodd);
 		content.setAttribute("key", key);
-		table.appendChild(content);
+		table_body.appendChild(content);
 		
 		addedRows++;
 	}
@@ -554,10 +561,10 @@ document.addEventListener("DOMContentLoaded",function() {
 		timeControls[i].addEventListener("click", change_time_window);
 	}
 	
-	document.getElementById("filter_listen").onchange = function() {
+	document.getElementById("filter_offline").onchange = function() {
 		update_table();
 	};
-	document.getElementById("filter_offline").onchange = function() {
+	document.getElementById("filter_collapsed").onchange = function() {
 		update_table();
 	};
 });

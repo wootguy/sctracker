@@ -63,7 +63,7 @@
 				background-color: #222;
 				vertical-align: top;
 			}
-			.row.odd {
+			.row.odd, thead {
 				background-color: #2B394E;
 			}
 			.server-row.odd:hover {
@@ -243,27 +243,26 @@
 				<div class="header">
 					<h2>Sven Co-op Server Rankings</h2>
 					
-					<div class="header-options">
-						<input type="checkbox" id="filter_listen">
-						<label for="filter_listen" title="Listen servers are created by players via the Start Game option. These are usually created temporarily for friends/testing.">Show listen servers</label>
-						
-						<input type="checkbox" id="filter_offline" checked>
+					<div class="header-options">						
+						<input type="checkbox" id="filter_offline" checked autocomplete="off">
 						<label for="filter_offline" title="Show servers that have been offline for less than a week. Servers offline for longer than a week are removed from the ranking list.">Show offline servers</label>
+						
+						<input type="checkbox" id="filter_collapsed" autocomplete="off">
+						<label for="filter_collapsed" title="Hide servers you haven't selected/expanded">Hide unselected servers</label>
 					</div>
 				</div>
 			
-				<table>
-					<tbody class="server-table">
+				<table class="server-table">
+					<thead class="server-table-header">
+						<th style="width: 30px;" title="Rankings are calculated by summing player counts for each minute in the past 2 weeks. Servers with high average player counts but low peaks will generally rank higher than servers that are full every day but only for an hour or so.">Rank</th>
+						<th>Server Name</th><th style="width: 100px;">IP:Port</th><th style="width: 100px;">Map</th><th style="width: 50px;">Players</th>
+					</thead>
+					<tbody class="server-table-body">
 					</tbody>
 				</table>
 				
 				<table class="hidden">
 					<tbody>
-						<tr class="header-row row odd">
-							<th title="Rankings are calculated by summing player counts for each minute in the past 2 weeks. Servers with high average player counts but low peaks will generally rank higher than servers that are full every day but only for an hour or so.">Rank</th>
-							<th>Server Name</th><th>Players</th><th>IP:Port</th><th>Map</th>
-						</tr>
-						
 						<tr class="server-content-row-template hidden">
 							<td class="server-content" colspan="100%">
 								<svg class="chart" width="0" height="150" viewBox="0 -150 500 150">
@@ -277,9 +276,9 @@
 						<tr class="row row-template hidden">
 							<td class="rank-cell"></td>
 							<td class="name-cell"></td>
-							<td class="players-cell"></td>
 							<td class="addr-cell"></td>
 							<td class="map-cell"></td>
+							<td class="players-cell"></td>
 						</tr>
 					</tbody>
 				</table>
