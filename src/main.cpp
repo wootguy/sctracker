@@ -367,6 +367,9 @@ FILE* loadRankFile(ServerState& state) {
 // false indicates a problem with the file
 bool loadServerHistory(ServerState& state, uint32_t now, bool programRestarted) {
 	FILE* file = loadStatFile(state);
+	if (!file) {
+		return false;
+	}
 
 	string dispName = state.displayName();
 	//printf("History for %s\n", dispName.c_str());
