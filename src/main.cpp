@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <algorithm>
 #include <queue>
-#include <errno.h>
 
 using namespace std;
 using namespace rapidjson;
@@ -262,7 +261,7 @@ FILE* loadStatFile(ServerState& state) {
 	else if (fileExists(archivePath)) {
 		printf("Unarchive revived server: %s\n", state.addr.c_str());
 		errno = 0;
-		if (rename(archivePath.c_str(), fpath.c_str()) == -1 && errno != 0) {
+		if (rename(archivePath.c_str(), fpath.c_str()) == -1) {
 			printf("Unarchive failed. Rename error %d: %s", errno, archivePath.c_str());
 			return NULL;
 		}
@@ -322,7 +321,7 @@ FILE* loadRankFile(ServerState& state) {
 	else if (fileExists(archivePath)) {
 		printf("Unarchive rank file: %s\n", state.addr.c_str());
 		errno = 0;
-		if (rename(archivePath.c_str(), fpath.c_str()) == -1 && errno != 0) {
+		if (rename(archivePath.c_str(), fpath.c_str()) == -1) {
 			printf("Unarchive rank failed. Rename error %d: %s", errno, archivePath.c_str());
 			return NULL;
 		}
@@ -833,10 +832,12 @@ bool archiveFile(string src, string dst) {
 	}
 
 	errno = 0;
-	if (rename(src.c_str(), dst.c_str()) == -1 && errno != 0) {
+	if (rename(src.c_str(), dst.c_str()) == -1) {
 		printf("Archive failed. Rename error %d: %s\n", errno, src.c_str());
 		return false;
 	}
+
+	return true;
 }
 
 bool archiveStats(string serverId) {
