@@ -97,6 +97,8 @@ int webRequest(string url, string& response_string) {
 
 		return response_code;
 	}
+
+	return 0;
 }
 
 char* loadFile(const string& fileName, int& length)

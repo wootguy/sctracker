@@ -543,6 +543,8 @@ bool writeDelta(uint32_t timeFrom, uint32_t timeTo, FILE* file) {
 			return false;
 		}
 	}
+
+	return true;
 }
 
 bool writeLiveStatFiles(ServerState& state, uint32_t now) {
@@ -577,7 +579,6 @@ bool writeLiveStatFiles(ServerState& state, uint32_t now) {
 
 	uint32_t numStatsPerAvg = AVG_STAT_FILE_INTERVAL / STAT_WRITE_FREQ;
 	uint32_t lastAvgStatWrite = 0;
-	uint32_t avgStatSum = 0;
 	uint32_t lastAvgStatTime = 0;
 	uint8_t lastPlayerCount = 0;
 
@@ -722,7 +723,7 @@ bool createServerStatFile(ServerState& newState) {
 	string archivePath = newState.getStatArchiveFilePath();
 	if (fileExists(fpath) || fileExists(archivePath)) {
 		printf("Stat file already exists: %s\n", dispName.c_str());
-		return loadServerHistory(newState, getEpochMillis(), true);
+		return loadServerHistory(newState, getEpochSeconds(), true);
 	}
 
 	FILE* file = fopen(fpath.c_str(), "wb");
@@ -867,7 +868,6 @@ void updateStats(Document& doc, Value& serverList, uint32_t now) {
 	int numServers = serverList.GetArray().Size();
 
 	set<string> updatedServers;
-	int totalWrites = 0;
 
 	g_writeStats.bytesWritten = 0;
 	g_writeStats.serversUpdated = 0;
@@ -1348,7 +1348,6 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 	
-	uint32_t lastStatTime = 0;
 	uint64_t writeCount = 1;
 	uint64_t startTime = (uint64_t)getEpochSeconds() * 1000ULL;
 	uint64_t nextWriteTime = startTime + ((uint64_t)(STAT_WRITE_FREQ * 1000) * writeCount);
