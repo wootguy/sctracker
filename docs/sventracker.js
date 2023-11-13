@@ -349,6 +349,9 @@ function update_table() {
 	
 	var reload_graph_keys = [];
 	
+	var contentDiv = document.getElementsByClassName("content-container")[0];
+	var oldScrollPos = contentDiv.scrollTop;
+	
 	var oldRows = document.getElementsByClassName("server-content-row");
 	for (var i = 0; i < oldRows.length; i++) {
 		if (oldRows[i].classList.contains("expanded")) {
@@ -447,6 +450,8 @@ function update_table() {
 	var now = Math.round(new Date().getTime() / 1000);
 	var timeLeft = g_server_data["rankFreq"] - (now - g_server_data["lastRankTime"]);
 	console.log("Next rank update in " + Math.round(timeLeft/60) + " minutes");
+	
+	contentDiv.scrollTop = oldScrollPos;
 }
 
 function load_server_json() {
