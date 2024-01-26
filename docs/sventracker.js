@@ -1,4 +1,4 @@
-var database_server = "https://w00tguy.no-ip.org/";
+var database_server = "https://w00tguy.no-ip.org/sctracker/";
 var stats_live_path = "stats/live/";
 var stats_avg_path = "stats/avg/";
 var g_server_data = null;
