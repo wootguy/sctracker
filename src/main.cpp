@@ -18,9 +18,10 @@ using namespace std::chrono;
 string server = "https://api.steampowered.com/";
 string api = "IGameServersService/GetServerList/v1";
 string apikey = "";
-string appid = "225840"; // Sven Co-op
-string filter = "\\appid\\" + appid + "\\dedicated\\1";
+string appid = "";
+string filter = "";
 string dataPath = "data/";
+string dataStatsPath = "data/stats/";
 string statsPath = "data/stats/active/"; // entire stat history for actively tracked servers
 string liveDataPath = "data/stats/live/"; // most recent stats
 string avgDataPath = "data/stats/avg/"; // all stats but averaged for better speed/size
@@ -1313,8 +1314,20 @@ bool loadServerInfos() {
 }
 
 int main(int argc, char** argv) {
+	if (argc <= 1) {
+		printf("Usage: sventracker <app_id>\n");
+		return 0;
+	}
+
+	appid = argv[1];
+	filter = "\\appid\\" + appid + "\\dedicated\\1";
+
 	if (!dirExists(dataPath) && !createDir(dataPath)) {
 		printf("Failed to create folder: %s\n", dataPath.c_str());
+		return 0;
+	}
+	if (!dirExists(dataStatsPath) && !createDir(dataStatsPath)) {
+		printf("Failed to create folder: %s\n", dataStatsPath.c_str());
 		return 0;
 	}
 	if (!dirExists(statsPath) && !createDir(statsPath)) {
