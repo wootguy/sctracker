@@ -1,9 +1,9 @@
 <!doctype html>
 <html>
 	<header>
-		<title>SvenTracker</title>
+		<title>Server Rankings</title>
 		<link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
-		<script type="text/javascript" src="sventracker.js"></script>
+		<script type="text/javascript" src="hltracker.js"></script>
 		<style>
 			body {
 				background: #181818;
@@ -63,8 +63,17 @@
 				background-color: #222;
 				vertical-align: top;
 			}
-			.row.odd, thead {
+			.row.odd.sc, thead.sc {
 				background-color: #2B394E;
+			}
+			.row.odd.hl, thead.hl {
+				background-color: rgb(74, 55, 24);
+			}
+			.row.odd.cs, thead.cs {
+				background-color: rgb(63, 62, 9);
+			}
+			.row.odd.rc, thead.rc {
+				background-color: rgb(87, 37, 37);
 			}
 			.server-row.odd:hover {
 				cursor: pointer;
@@ -241,14 +250,32 @@
 		<div class ="content-container">
 			<div class="content">
 				<div class="header">
-					<h2>Sven Co-op Server Rankings</h2>
-					
-					<div class="header-options">						
+					<h2>
+						<span id="game-title">Half-Life</span> Server Rankings
+					</h2>
+						
+					<div class="header-options">	
+						Game:
+						<select id="game_selector">
+							<!-- 
+							Holy shit the cs server list is beyond fucked. Flooded with fake/spam servers.
+							Nothing real in the first 1k servers. Need a way to filter those out.
+							
+							<option value="cs" selected>Counter-Strike</option>
+							-->
+							<option value="hl">Half-Life</option>
+							<option value="rc" selected>Ricochet</option>
+							<option value="sc" selected>Sven Co-op</option>
+						</select>
+						&nbsp;&nbsp;
+						
 						<input type="checkbox" id="filter_offline" checked autocomplete="off">
 						<label for="filter_offline" title="Show servers that have been offline for less than a week. Servers offline for longer than a week are removed from the ranking list.">Show offline servers</label>
+						&nbsp;&nbsp;
 						
 						<input type="checkbox" id="filter_collapsed" autocomplete="off">
 						<label for="filter_collapsed" title="Hide servers you haven't selected/expanded">Hide unselected servers</label>
+						
 					</div>
 				</div>
 			

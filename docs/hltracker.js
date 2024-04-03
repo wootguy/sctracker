@@ -1,4 +1,4 @@
-var database_server = "https://w00tguy.no-ip.org/sctracker/";
+var database_server = "https://w00tguy.no-ip.org/hltracker/";
 var stats_live_path = "stats/live/";
 var stats_avg_path = "stats/avg/";
 var g_server_data = null;
@@ -22,6 +22,12 @@ var auto_refresh = true;
 const FL_SERVER_DEDICATED = 1;
 const FL_SERVER_SECURE = 2;
 const FL_SERVER_LINUX = 4;
+
+var refreshInterval;
+var jsonInterval;
+
+var g_graphLineColor = "#d97400";
+var g_serverLimit = 1000;
 
 function fetchTextFile(path, callback) {
 	var httpRequest = new XMLHttpRequest();
@@ -171,7 +177,7 @@ function renderGraph(serverid) {
 		points += " " + (chartWidthPad + i*xScale) + "," + (chartHeightPad + players * yScale);
 	}
 	{
-		var polyline = '<polyline fill="none" stroke="#0074d9" stroke-width="1" points="' + points + '"/>';
+		var polyline = '<polyline fill="none" stroke="' + g_graphLineColor + '" stroke-width="1" points="' + points + '"/>';
 		chartg.innerHTML += polyline;
 	}
 	
@@ -378,7 +384,7 @@ function update_table() {
 	
 	var addedRows = 0;
 	
-	for (var i = 0; i < g_server_list.length; i++) {
+	for (var i = 0; i < g_server_list.length && i < g_serverLimit; i++) {
 		var key = g_server_list[i];
 		
 		var offlineTime = Math.round((updateTime - servers[key]["time"]) / 60);
@@ -394,7 +400,8 @@ function update_table() {
 		
 		var row = row_template.cloneNode(true);
 		var classodd = addedRows % 2 ? "odd" : "even";
-		row.setAttribute("class", "row server-row " + key + " " + classodd);
+		var gameClass = document.getElementById("game_selector").value;
+		row.setAttribute("class", "row server-row " + key + " " + classodd + " " + gameClass);
 		row.setAttribute("serverid", key);
 		row.getElementsByClassName("rank-cell")[0].textContent = addedRows+1;
 		row.getElementsByClassName("name-cell")[0].textContent = servers[key]["name"];
@@ -465,10 +472,13 @@ function load_server_json() {
 	});
 }
 
-function load_server_list() {	
+function load_server_list() {
 	load_server_json();
 	
-	setInterval(function () {
+	clearTimeout(refreshInterval);
+	clearTimeout(jsonInterval);
+	
+	refreshInterval = setInterval(function () {
 		if (auto_refresh) {
 			if (!document.hidden) {
 				load_server_json();
@@ -479,7 +489,7 @@ function load_server_list() {
 		}
 	}, 1000*60);
 	
-	setInterval(function () {
+	jsonInterval = setInterval(function () {
 		if (!document.hidden && auto_refresh) {
 			if (g_should_refresh_servers) {
 				g_should_refresh_servers = false;
@@ -557,9 +567,44 @@ function change_time_window() {
 	}
 }
 
+function update_game() {
+	var game = document.getElementById("game_selector").value;
+	
+	if (game == "hl") {
+		document.getElementById("game-title").textContent = "Half-Life";
+		g_graphLineColor = "#d97400";
+		
+	} else if (game == "sc") {
+		document.getElementById("game-title").textContent = "Sven Co-op";
+		g_graphLineColor = "#0074d9";
+	} else if (game == "rc") {
+		document.getElementById("game-title").textContent = "Ricochet";
+		g_graphLineColor = "#d90000";
+	} else if (game == "cs") {
+		document.getElementById("game-title").textContent = "Counter-Strike";
+		g_graphLineColor = "#d9d900";
+	}
+	
+	var loader = document.getElementsByClassName("site-loader")[0];
+	loader.classList.add("loader");
+	
+	document.getElementById("filter_collapsed").checked = false;
+	
+	database_server = "https://w00tguy.no-ip.org/" + game + "tracker/";
+	console.log("Using DB server: " + database_server);
+	
+	var theader = document.getElementsByClassName("server-table-header")[0];
+	theader.setAttribute("class", "server-table-header " + game);
+
+	var table_body = document.getElementsByClassName("server-table-body")[0];
+	table_body.textContent = "";
+	load_server_list();
+}
+
 document.addEventListener("DOMContentLoaded",function() {
+	update_game();
+	
 	handle_resize();
-	load_server_list();	
 	
 	var timeControls = document.getElementsByClassName("chart-time");
 	for (var i = 0; i < timeControls.length; i++) {
@@ -571,5 +616,8 @@ document.addEventListener("DOMContentLoaded",function() {
 	};
 	document.getElementById("filter_collapsed").onchange = function() {
 		update_table();
+	};
+	document.getElementById("game_selector").onchange = function() {
+		update_game();
 	};
 });
