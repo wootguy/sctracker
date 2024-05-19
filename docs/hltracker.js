@@ -351,6 +351,7 @@ function update_table() {
 	var row_template = document.getElementsByClassName("row-template")[0];
 	var expand_content_template = document.getElementsByClassName("server-content-row-template")[0];
 	var showOfflineServers = document.getElementById("filter_offline").checked;
+	var showDeadServers = document.getElementById("filter_dead").checked;
 	var hideCollapsedServers = document.getElementById("filter_collapsed").checked;
 	
 	var reload_graph_keys = [];
@@ -388,8 +389,13 @@ function update_table() {
 		var key = g_server_list[i];
 		
 		var offlineTime = Math.round((updateTime - servers[key]["time"]) / 60);
+		var playerHours = servers[key]["rank"] / 60;
 		
 		if (!showOfflineServers && offlineTime > 0) {
+			continue;
+		}
+		
+		if (!showDeadServers && playerHours < 14) {
 			continue;
 		}
 		
@@ -404,6 +410,7 @@ function update_table() {
 		row.setAttribute("class", "row server-row " + key + " " + classodd + " " + gameClass);
 		row.setAttribute("serverid", key);
 		row.getElementsByClassName("rank-cell")[0].textContent = addedRows+1;
+		row.getElementsByClassName("rank-cell")[0].title = playerHours.toLocaleString(undefined, { maximumFractionDigits: 0  }) + " player hours";
 		row.getElementsByClassName("name-cell")[0].textContent = servers[key]["name"];
 		row.getElementsByClassName("addr-cell")[0].textContent = key.replace("_", ":");
 		
@@ -614,6 +621,9 @@ document.addEventListener("DOMContentLoaded",function() {
 	document.getElementById("filter_offline").onchange = function() {
 		update_table();
 	};
+	document.getElementById("filter_dead").onchange = function() {
+		update_table();
+	};	
 	document.getElementById("filter_collapsed").onchange = function() {
 		update_table();
 	};

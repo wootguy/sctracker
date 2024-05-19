@@ -273,6 +273,10 @@
 						<label for="filter_offline" title="Show servers that have been offline for less than a week. Servers offline for longer than a week are removed from the ranking list.">Show offline servers</label>
 						&nbsp;&nbsp;
 						
+						<input type="checkbox" id="filter_dead" checked autocomplete="off">
+						<label for="filter_dead" title="Show servers that have fewer than 14 &quot;player hours&quot; in the past 2 weeks.">Show dead servers</label>
+						&nbsp;&nbsp;
+						
 						<input type="checkbox" id="filter_collapsed" autocomplete="off">
 						<label for="filter_collapsed" title="Hide servers you haven't selected/expanded">Hide unselected servers</label>
 						
@@ -281,7 +285,9 @@
 			
 				<table class="server-table">
 					<thead class="server-table-header">
-						<th style="width: 30px;" title="Rankings are calculated by summing player counts for each minute in the past 2 weeks. Servers with high average player counts but low peaks will generally rank higher than servers that are full every day but only for an hour or so.">Rank</th>
+						<th style="width: 30px;" title="Rankings are calculated by summing player counts for each minute in the past 2 weeks. Servers with high average player counts but low peaks will generally rank higher than servers that are full every day but only for an hour or so.
+
+Hover your mouse over a rank number to see its &quot;player hours&quot; stat, which is the number of hours a player has been on the server. A server with 32 players in it will accumulate 32 &quot;player hours&quot; per hour.">Rank</th>
 						<th>Server Name</th><th style="width: 100px;">IP:Port</th><th style="width: 100px;">Map</th><th style="width: 50px;">Players</th>
 					</thead>
 					<tbody class="server-table-body">
