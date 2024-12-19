@@ -190,6 +190,13 @@ bool getServerListJson(Value& serverList, Document& json) {
 
 	if (resp_code != 200) {
 		printf("Failed to fetch server list (HTTP response code %d)\n", resp_code);
+
+		if (resp_code == 0) {
+			// should never happen
+			printf("The thing which should never happen, happened. Response text: %s\n", response_string.c_str());
+			exit(1);
+		}
+
 		return false;
 	}
 
