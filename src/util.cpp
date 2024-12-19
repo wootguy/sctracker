@@ -98,6 +98,11 @@ int webRequest(string url, string& response_string) {
 		return response_code;
 	}
 
+	// don't know what causes this but it's happening daily. There is no error code to check.
+	// Restarting the program fixes it.
+	printf("Failed to curl_easy_init(). Aborting.\n");
+	exit(1);
+
 	return 0;
 }
 
