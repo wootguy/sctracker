@@ -13,7 +13,7 @@ const PCNT_UNREACHABLE = (PCNT_FL_MASK);
 
 const RANK_STAT_INTERVAL = 60; // gaps between rank data points
 const RANK_STAT_AVG_INTERVAL = 60*60; // gaps between rank data points in averaged data
-var g_timeWindow = 60*60*24*7; // ignore stats older than this when generating graphs
+var g_timeWindow = 60*60*24*14; // ignore stats older than this when generating graphs
 var g_useAvgData = false;
 
 var g_should_refresh_servers = false;
@@ -180,6 +180,70 @@ function renderGraph(serverid) {
 		var polyline = '<polyline fill="none" stroke="' + g_graphLineColor + '" stroke-width="1" points="' + points + '"/>';
 		chartg.innerHTML += polyline;
 	}
+	
+	let hoverline = '<polyline class="hover-line" fill="none" stroke="#888" stroke-width="1" points="0 0 0 0"/>';
+	chartg.innerHTML += hoverline;
+	hoverline = chartg.getElementsByClassName("hover-line")[0];
+	let hoverInfo = document.getElementById("hover-tooltip");
+	
+	chart.addEventListener("mousemove", function(event) {
+		const mouseX = event.clientX + 2; // don't place exactly on cursor so tooltips still work
+		const lineX = Math.min(Math.max(mouseX - chart.getBoundingClientRect().left, chartWidthPad), svgWidth-1);
+		const relativeX = lineX - chartWidthPad;
+		const percentX = 1.0 - (relativeX / (chartWidth-1));
+		const hoverSeconds = g_server_data["lastUpdateTime"] - (percentX * g_timeWindow);
+		const hoverDate = new Date(hoverSeconds*1000);
+		
+		hoverline.classList.remove("hidden");
+		hoverInfo.classList.remove("hidden");
+		
+		if (g_timeWindow <= 43200*60) { // 30d or less
+			hoverInfo.textContent = hoverDate.toLocaleTimeString(undefined, {
+				weekday: 'short', 
+				month: 'short', 
+				day: 'numeric',
+				hour: 'numeric', 
+				minute: 'numeric',
+				hour12: true
+			});
+			
+			let i = Math.min(Math.floor((1.0-percentX)*datapoints.length), datapoints.length-1);
+			let players = Math.max(0, datapoints[i]);
+			hoverInfo.innerHTML += "<br>" + "Players: " + players;
+		} else if (g_timeWindow < 518400*60) { // 1y or less
+			hoverInfo.textContent = hoverDate.toLocaleString(undefined, {
+				weekday: 'short', 
+				year: 'numeric', 
+				month: 'short', 
+				day: 'numeric'
+			});
+		}
+		else {
+			hoverInfo.textContent = hoverDate.toLocaleString(undefined, {
+				year: 'numeric', 
+				month: 'short', 
+				day: 'numeric'
+			});
+		}
+		
+		hoverline.setAttribute("points", lineX + " 0 " + lineX + " 512");
+		
+		hoverInfo.style.top = (chart.getBoundingClientRect().top - 5) + 'px';
+		
+		if (percentX > 0.2) {
+			hoverInfo.style.left = (lineX + chart.getBoundingClientRect().left + 5) + 'px';
+			hoverInfo.style.removeProperty("right");
+		} else {
+			hoverInfo.style.right = (chart.getBoundingClientRect().right - (lineX - 20)) + 'px';
+			hoverInfo.style.removeProperty("left");
+		}
+	});
+	row.addEventListener("mouseout", function(event) {
+		if (!row.contains(event.relatedTarget)) {
+			hoverInfo.classList.add("hidden");
+			hoverline.classList.add("hidden");
+		}
+	});
 	
 	console.log("plot " + datapoints.length + " points (" + g_server_stats[serverid]["dataView"].byteLength + " bytes)");
 }

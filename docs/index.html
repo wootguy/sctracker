@@ -172,6 +172,16 @@
 				text-align: right;
 			}
 			
+			#hover-tooltip {
+				position: fixed;
+				background: rgba(0,0,0,0.5);
+				color: white;
+				border-radius: 2px;
+				pointer-events: none;
+				font-size: 12px;
+				font-family: monospace;
+			}
+			
 			.loader {
 				position: absolute;
 				left: 50%;
@@ -323,18 +333,21 @@ Hover your mouse over a rank number to see its &quot;player hours&quot; stat, wh
 		<div class="fixed-controls">
 			<div class="chart-controls">
 				<div class="time-controls">
-					<span class="chart-controls-label" title="How much history to view">Time window:</span>
-					<span class="chart-time" minutes="60" title="1 hour time window">1h</span>
-					<span class="chart-time" minutes="480" title="4 hour time window">8h</span>
+					<span class="chart-controls-label" title="How much history to view in the expanded server row graphs.
+					
+Selecting a time window longer than 1 month will average player count data to 1-hour intervals, reducing peak heights. Data points for shorter intervals represent a point in time for each minute, with no averaging.">Graph time window:</span>
+					<span class="chart-time" minutes="120" title="2 hour time window">2h</span>
+					<span class="chart-time" minutes="480" title="8 hour time window">8h</span>
 					<span class="chart-time" minutes="1440" title="24 hour time window">24h</span>
-					<span class="chart-time" minutes="2880" title="2 day time window">2d</span>
-					<span class="chart-time" minutes="5760" title="4 day time window">4d</span>
-					<span class="chart-time active" minutes="10080" title="7 day time window">7d</span>
-					<span class="chart-time" minutes="20160" title="14 day time window">14d</span>
-					<span class="chart-time" minutes="43200" title="30 day time window">30d</span>
+					<span class="chart-time" minutes="4320" title="3 day time window">3d</span>
+					<span class="chart-time" minutes="10080" title="7 day time window">7d</span>
+					<span class="chart-time active" minutes="20160" title="14 day time window">14d</span>
+					<span class="chart-time" minutes="43200" title="1 month time window">1mo</span>
 					<span class="chart-time" minutes="129600" title="3 month time window">3mo</span>
 					<span class="chart-time" minutes="259200" title="6 month time window">6mo</span>
 					<span class="chart-time" minutes="518400" title="1 year time window">1yr</span>
+					<span class="chart-time" minutes="1036800" title="2 year time window">2yr</span>
+					<span class="chart-time" minutes="2073600" title="4 year time window">4yr</span>
 					<!--<span class="chart-time" minutes="0" title="View entire stat history">All</span>-->
 				</div>
 				<!--
@@ -349,6 +362,7 @@ Hover your mouse over a rank number to see its &quot;player hours&quot; stat, wh
 				-->
 			</div>
 		</div>
+		<div id="hover-tooltip"></div>
 	</body>
 
 </html>
