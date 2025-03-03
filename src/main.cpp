@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <algorithm>
 #include <queue>
+#include <unordered_map>
 
 using namespace std;
 using namespace rapidjson;
@@ -17,6 +18,7 @@ using namespace std::chrono;
 
 string server = "https://api.steampowered.com/";
 string api = "IGameServersService/GetServerList/v1";
+string ipinfo_api = "http://ipinfo.io/";
 string apikey = "";
 string appid = "";
 string filter = "";
@@ -29,9 +31,18 @@ string archivePath = "data/stats/archive/"; // stats for dead servers that maybe
 string rankHistoryPath = "data/stats/rank/"; // past server rankings
 string archiveRankPath = "data/stats/archive/rank/"; // archived because ranking formula may change
 string serverInfoPath = "data/tracker.json"; // current server/tracker status
+string ipInfoPath = "data/ipinfo.json"; // ip info cache
 
 const char* statFileMagicBytes = "SVTK";
 const char* rankFileMagicBytes = "SVRK";
+
+struct ServerIpInfo {
+	string country;
+	string region;
+	uint32_t lastUpdateTime; // last time the IP info was queried
+};
+
+unordered_map<string, ServerIpInfo> ip_cache;
 
 //#define DEBUG_MODE
 
@@ -56,6 +67,8 @@ const char* rankFileMagicBytes = "SVRK";
 
 #define MAX_LIVE_STATS_AGE_RAW 60*60*24*30 // max number of raw stats written to live data for the web
 #define AVG_STAT_FILE_INTERVAL 60*60 // interval for averaged stats
+
+#define IP_CACHE_MAX_DAYS 30 // number of days to cache ip info
 
 #pragma pack(push, 1)
 struct StatFileHeader {
@@ -170,16 +183,132 @@ string ServerState::displayName() {
 	return "[" + addr + "] " + name;
 }
 
-bool loadApiKey() {
+string loadApiKey(const char* fpath) {
 	int length;
-	char* buffer = loadFile("api_key.txt", length);
+	char* buffer = loadFile(fpath, length);
 	if (!buffer) {
 		printf("Bad api key file\n");
-		return false;
+		return "";
 	}
-	apikey = buffer;
+	string ret = buffer;
 	delete[] buffer;
-	return true;
+	return ret;
+}
+
+void save_ip_cache() {
+	Document json;
+	json.SetObject();
+
+	auto& allocator = json.GetAllocator();
+
+	for (auto iter : ip_cache) {
+		ServerIpInfo& info = iter.second;
+
+		Value obj;
+		Value ip(iter.first.c_str(), allocator);
+		Value country(info.country.c_str(), allocator);
+		Value region(info.region.c_str(), allocator);
+
+		obj.SetObject();
+		obj.AddMember("country", country, allocator);
+		obj.AddMember("region", region, allocator);
+		obj.AddMember("updated", info.lastUpdateTime, allocator);
+
+		json.AddMember(ip, obj, allocator);
+	}
+
+	writeJson(ipInfoPath, json);
+}
+
+void load_ip_cache() {
+	Document json;
+
+	if (!loadJson(ipInfoPath, json) || !json.IsObject()) {
+		printf("Failed to load IP cache file: %s\n", ipInfoPath.c_str());
+		return;
+	}
+
+	for (auto& member : json.GetObject()) {
+		const char* key = member.name.GetString();
+
+		Value& value = json[key];
+
+		if (!value.HasMember("country") || !value.HasMember("region") || !value.HasMember("updated")) {
+			printf("IP cache missing fields for %s\n", key);
+			continue;
+		}
+
+		ServerIpInfo info;
+		info.country = value["country"].GetString();
+		info.region = value["region"].GetString();
+		info.lastUpdateTime = value["updated"].GetUint();
+
+		ip_cache[key] = info;
+	}
+}
+
+ServerIpInfo get_ipinfo(const std::string& ip) {
+	std::string country = "???";
+	uint32_t now = getEpochSeconds();
+
+	ServerIpInfo blankInfo;
+	blankInfo.country = "";
+	blankInfo.region = "";
+	blankInfo.lastUpdateTime = 0;
+
+	if (ip_cache.find(ip) != ip_cache.end()) {
+		ServerIpInfo& info = ip_cache[ip];
+		country = info.country;
+		int ageDays = (now - info.lastUpdateTime) / (60 * 60 * 24);
+
+		if (ageDays > IP_CACHE_MAX_DAYS) {
+			ip_cache.erase(ip);
+			printf("Cleared ipinfo cache for address %s (age: %d days)\n", ip.c_str(), ageDays);
+		}
+		else {
+			return info;
+		}
+	}
+	if (ip_cache.find(ip) == ip_cache.end()) {
+		static string ipinfotoken = "";
+		if (!ipinfotoken.length()) {
+			ipinfotoken = loadApiKey("api_key_ipinfo.txt");
+		}
+		if (!ipinfotoken.length()) {
+			return blankInfo;
+		}
+
+		printf("Fetching IP info for %s\n", ip.c_str());
+		string url = ipinfo_api + ip + "?token=" + ipinfotoken;
+		string response_string;
+		int resp_code = webRequest(url, response_string);
+
+		if (resp_code != 200) {
+			printf("Failed to fetch IP info (HTTP response code %d)\n", resp_code);
+			return blankInfo;
+		}
+
+		Document json;
+		json.Parse(response_string.c_str());
+
+		if (!json.HasMember("country") || !json.HasMember("region")) {
+			printf("Json missing 'country' or 'region' member:\n%s\n", stringifyJson(json).c_str());
+			return blankInfo;
+		}
+
+		ServerIpInfo ipinfo;
+		ipinfo.country = json["country"].GetString();
+		ipinfo.region = json["region"].GetString();
+		ipinfo.lastUpdateTime = now;
+
+		ip_cache[ip] = ipinfo;
+
+		save_ip_cache();
+
+		return ipinfo;
+	}
+
+	return blankInfo;
 }
 
 bool getServerListJson(Value& serverList, Document& json) {
@@ -1227,10 +1356,15 @@ void saveServerInfos() {
 
 	for (auto item : g_servers) {
 		ServerState& server = item.second;
+		string ip = server.addr.substr(0, server.addr.find("_"));
+		ServerIpInfo ipinfo = get_ipinfo(ip);
+
 		Value obj;
 		Value name(server.name.c_str(), allocator);
 		Value addr(item.first.c_str(), allocator);
 		Value map(server.map.c_str(), allocator);
+		Value country(ipinfo.country.c_str(), allocator);
+		Value region(ipinfo.region.c_str(), allocator);
 
 		obj.SetObject();
 		obj.AddMember("name", name, allocator);
@@ -1241,6 +1375,8 @@ void saveServerInfos() {
 		obj.AddMember("bots", server.bots, allocator);
 		obj.AddMember("map", map, allocator);		
 		obj.AddMember("rank", server.rankSum, allocator);		
+		obj.AddMember("country", country, allocator);
+		obj.AddMember("region", region, allocator);
 
 		serversObj.AddMember(addr, obj, allocator);
 	}
@@ -1362,9 +1498,10 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 	
-	loadApiKey();
+	load_ip_cache();
+	apikey = loadApiKey("api_key.txt");
 
-	if (!loadApiKey() || !loadServerInfos()) {
+	if (!apikey.length() || !loadServerInfos()) {
 		return 0;
 	}
 	
