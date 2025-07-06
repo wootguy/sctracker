@@ -278,6 +278,23 @@ ServerIpInfo get_ipinfo(const std::string& ip) {
 			return blankInfo;
 		}
 
+		static uint64_t lastIpCheck = 0;
+		static uint32_t throttledRequests = 0;
+		uint64_t now = getEpochMillis();
+		uint32_t deltaSeconds = (now - lastIpCheck) / 1000ULL;
+
+		if (deltaSeconds < 30) {
+			throttledRequests++;
+			return blankInfo; // don't get throttled
+		}
+
+		if (throttledRequests) {
+			printf("Delayed %d IP info requests to prevent throttling\n", throttledRequests);
+		}
+
+		throttledRequests = 0;
+		lastIpCheck = now;
+
 		printf("Fetching IP info for %s\n", ip.c_str());
 		string url = ipinfo_api + ip + "?token=" + ipinfotoken;
 		string response_string;
