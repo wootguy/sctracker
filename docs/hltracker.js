@@ -673,12 +673,16 @@ function update_table() {
 		var row = row_template.cloneNode(true);
 		var classodd = addedRows % 2 ? "odd" : "even";
 		var gameClass = document.getElementById("game_selector").value;
+		var cnText = ', ' + countryCodes[servers[key]["country"]];
+		if (servers[key]["country"] == 'XX')
+			cnText = '';
+		var locText = servers[key]["region"] + cnText;
 		row.setAttribute("class", "row server-row " + key + " " + classodd + " " + gameClass);
 		row.setAttribute("serverid", key);
 		row.getElementsByClassName("rank-cell")[0].textContent = addedRows+1;
 		row.getElementsByClassName("rank-cell")[0].title = playerHours.toLocaleString(undefined, { maximumFractionDigits: 0  }) + " player hours";
 		row.getElementsByClassName("name-cell")[0].textContent = servers[key]["name"];
-		row.getElementsByClassName("flag-cell")[0].innerHTML = '<img class="flag" src="flags/' + servers[key]["country"].toLowerCase() + '.svg" title="' + servers[key]["region"] + ', ' + countryCodes[servers[key]["country"]] + '" />';
+		row.getElementsByClassName("flag-cell")[0].innerHTML = '<img class="flag" src="flags/' + servers[key]["country"].toLowerCase() + '.svg" title="' + locText + '" />';
 		row.getElementsByClassName("addr-cell")[0].textContent = key.replace("_", ":");
 		
 		if (offlineTime < g_server_data["unreachableTime"]/60) {

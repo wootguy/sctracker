@@ -307,14 +307,23 @@ ServerIpInfo get_ipinfo(const std::string& ip) {
 		Document json;
 		json.Parse(response_string.c_str());
 
+		ServerIpInfo ipinfo;
+
 		if (!json.HasMember("country") || !json.HasMember("region")) {
-			printf("Json missing 'country' or 'region' member:\n%s\n", stringifyJson(json).c_str());
-			return blankInfo;
+			if (json.HasMember("bogon")) {
+				ipinfo.country = "XX";
+				ipinfo.region = "Bogon address";
+			}
+			else {
+				printf("Json missing 'country' or 'region' member:\n%s\n", stringifyJson(json).c_str());
+				return blankInfo;
+			}
+		}
+		else {
+			ipinfo.country = json["country"].GetString();
+			ipinfo.region = json["region"].GetString();
 		}
 
-		ServerIpInfo ipinfo;
-		ipinfo.country = json["country"].GetString();
-		ipinfo.region = json["region"].GetString();
 		ipinfo.lastUpdateTime = now;
 
 		ip_cache[ip] = ipinfo;
