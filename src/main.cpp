@@ -280,8 +280,7 @@ ServerIpInfo get_ipinfo(const std::string& ip) {
 
 		static uint64_t lastIpCheck = 0;
 		static uint32_t throttledRequests = 0;
-		uint64_t now = getEpochMillis();
-		uint32_t deltaSeconds = (now - lastIpCheck) / 1000ULL;
+		uint32_t deltaSeconds = now - lastIpCheck;
 
 		if (deltaSeconds < 30) {
 			throttledRequests++;
