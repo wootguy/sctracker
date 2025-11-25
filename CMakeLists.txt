@@ -2,8 +2,9 @@ cmake_minimum_required(VERSION 3.0)
 project(SvenTracker)
 
 set(SOURCE_FILES 
-    src/main.cpp
+    src/main.h src/main.cpp
     src/util.h src/util.cpp
+    src/a2s.h src/a2s.cpp
 )
 
 include_directories(include)

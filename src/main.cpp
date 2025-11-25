@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <queue>
 #include <unordered_map>
+#include "main.h"
+#include "a2s.h"
 
 using namespace std;
 using namespace rapidjson;
@@ -93,31 +95,7 @@ struct StatFileHeader {
 #define FL_SERVER_SECURE 2
 #define FL_SERVER_LINUX 4 // else windows
 
-struct ServerState {
-	string addr; // port separator converted to filename safe character
-	string name;
-	string map;
-	uint8_t players;
-	uint8_t maxPlayers;
-	uint8_t bots;
-	bool unreachable;
-	uint8_t flags;
 
-	uint32_t lastWriteTime; // last time a player count stat was written (epoch seconds)
-	uint32_t lastResponseTime; // last time data was received for this server
-	uint32_t rankSum; // sum of player counts over rankDataPoints data points
-	int lastRank; // last rank written to file
-	
-	string getStatFilePath();
-	string getStatArchiveFilePath();
-	string getLiveStatFilePath();
-	string getLiveAvgStatFilePath();
-	string getRankHistFilePath();
-	string getRankArchiveFilePath();
-	uint32_t secondsSinceLastResponse();
-	string displayName();
-	void init();
-}; 
 
 void ServerState::init() {
 	addr = "";
@@ -132,6 +110,7 @@ void ServerState::init() {
 	bots = 0;
 	rankSum = 0;
 	lastRank = -1;
+	a2s_players.clear();
 }
 
 struct WriteStats {
@@ -141,7 +120,7 @@ struct WriteStats {
 };
 
 WriteStats g_writeStats;
-map<string, ServerState> g_servers;
+unordered_map<string, ServerState> g_servers;
 
 uint32_t g_lastRankTime = 0;
 uint32_t g_lastUpdateTime = 0;
@@ -1402,6 +1381,20 @@ void saveServerInfos() {
 		obj.AddMember("rank", server.rankSum, allocator);		
 		obj.AddMember("country", country, allocator);
 		obj.AddMember("region", region, allocator);
+		
+		if (server.a2s_success) {
+			Value playerList;
+			playerList.SetArray();
+
+			for (Player& plr : server.a2s_players) {
+				string a2sStr = plr.name + "\\" + to_string(plr.score) + "\\" + to_string((int)plr.duration);
+				Value a2sVal(a2sStr.c_str(), allocator);
+
+				playerList.PushBack(a2sVal, allocator);
+			}
+
+			obj.AddMember("a2s", playerList, allocator);
+		}
 
 		serversObj.AddMember(addr, obj, allocator);
 	}
@@ -1487,6 +1480,8 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
+	a2s_init();
+
 	appid = argv[1];
 	filter = "\\appid\\" + appid + "\\dedicated\\1";
 
@@ -1548,12 +1543,13 @@ int main(int argc, char** argv) {
 
 		cleanupServerListJson(json, serverList);
 
-		uint64_t now = getEpochMillis();
+		printf("Server list fetched in %.1fs.\n", (getEpochMillis() - fetchStartTime) / 1000.0f);
 
-		printf("Server list fetched in %.1fs. Total update time: %.2fs\n\n", 
-			(now - fetchStartTime) / 1000.0f, (now - updateStartTime) / 1000.0f);
+		a2s_query_all();
+
+		printf("Total update time: %.2fs\n\n", (getEpochMillis() - updateStartTime) / 1000.0f);
 		
-		now = getEpochMillis();
+		uint64_t now = getEpochMillis();
 		uint32_t waitTime = nextWriteTime - now;
 
 		if (nextWriteTime > now) {
@@ -1584,6 +1580,7 @@ int main(int argc, char** argv) {
 		} while (nextWriteTime < now);
 	}
 	
+	a2s_cleanup();
 
 	return 0;
 }
