@@ -301,10 +301,12 @@ function renderGraph(serverid) {
 	var row = document.getElementsByClassName("server-content-row " + serverid)[0];
 	var chart = row.getElementsByClassName("chart")[0];
 	
+	var playerListWidth = 240;
+	
 	var chartg = row.getElementsByClassName("chartg")[0];
 	var chartWidthPad = 30;
 	var chartHeightPad = 10;
-	var svgWidth = row.offsetWidth - 20;
+	var svgWidth = row.offsetWidth - (20 + playerListWidth);
 	var chartWidth = svgWidth - (chartWidthPad);
 	var svgHeight = chart.getAttribute("height");
 	var chartHeight = svgHeight - (chartHeightPad*2);
@@ -436,7 +438,7 @@ function renderGraph(serverid) {
 			hoverInfo.style.left = (lineX + chart.getBoundingClientRect().left + 5) + 'px';
 			hoverInfo.style.removeProperty("right");
 		} else {
-			hoverInfo.style.right = (chart.getBoundingClientRect().right - (lineX - 20)) + 'px';
+			hoverInfo.style.right = (chart.getBoundingClientRect().right - (lineX - (20 + playerListWidth))) + 'px';
 			hoverInfo.style.removeProperty("left");
 		}
 	});
@@ -449,6 +451,105 @@ function renderGraph(serverid) {
 	
 	console.log("plot " + datapoints.length + " points (" + g_server_stats[serverid]["dataView"].byteLength + " bytes)");
 }
+
+function updatePlayerTable(serverid) {
+	var sv_row = document.getElementsByClassName("server-content-row " + serverid)[0];
+	var plist = sv_row.getElementsByClassName("player-list")[0].querySelector('tbody');
+	var phead = sv_row.getElementsByClassName("player-header")[0];
+	
+	let sv_dat = g_server_data["servers"][serverid];
+	let player_data = sv_dat["a2s"];
+	
+	plist.innerHTML = "";
+	
+	if (!player_data || !player_data.length) {
+		let row = plist.insertRow(plist.rows.length);
+		row.innerHTML = '<tr class="player-row"><td class="player-name"></td><td class="player-score"></td><td class="player-time"></td></tr>';
+		
+		if (!player_data) {
+			sv_row.getElementsByClassName("a2s-fail")[0].classList.remove("hidden");
+		} else {
+			sv_row.getElementsByClassName("a2s-empty")[0].classList.remove("hidden");
+		}
+		
+		phead.textContent = "0 Players";
+		return;
+	}
+	
+	var botCount = sv_dat["bots"];
+	var plrCount = player_data.length - botCount;
+	
+	phead.textContent = plrCount + " Players";
+
+	if (plrCount <= 0) {
+		phead.textContent = botCount + " Bots";
+	}
+	else if (botCount > 0)
+		phead.textContent += " + " + botCount + " Bots";
+	
+	let player_data_sorted = [];
+	
+	for (let i = 0; i < player_data.length; i++) {
+		let dat = player_data[i];
+		let parts = dat.split(/\\/);
+		let name = parts[0];
+		let score = parts[1];
+		let time = format_age(parts[2], true, false);
+		let timeTool = format_age(parts[2], false, true);
+		
+		player_data_sorted.push({name: name, score: score, time: time, timeTool: timeTool});
+	}
+	
+	player_data_sorted.sort((a, b) => {
+		if (a.score !== b.score) {
+			return b.score - a.score;
+		}
+		return a.name.localeCompare(b.name); // alphabetical if scores equal
+	});
+	
+	for (let i = 0; i < player_data.length; i++) {
+		let dat = player_data_sorted[i];
+		let name = dat["name"];
+		let score = dat["score"];
+		let time = dat["time"];
+		let timeTool = dat["timeTool"];
+		
+		let row = plist.insertRow(plist.rows.length);
+		row.innerHTML = '<tr class="player-row"><td class="player-name" title="' + name + '">' + name + '</td><td class="player-score" title="' + score + '">' + score + '</td><td class="player-time" title="' + timeTool + '">' + time + '</td></tr>';
+	}
+}
+
+function format_age(secondsPassed, oneUnitOnly, longUnits) {
+	let seconds = secondsPassed;
+	let minutes = Math.floor(secondsPassed / 60);
+	let hours = Math.floor(secondsPassed / (60*60));
+	let days = Math.floor(secondsPassed / (60*60*24));
+	
+	let dayUnit = longUnits ? " days" : "d";
+	let hourUnit = longUnits ? " hours" : "h";
+	let minuteUnit = longUnits ? " minutes" : "m";
+	let secondUnit = longUnits ? " seconds" : "s";
+	let separator = longUnits ? ", " : " ";
+	let minUnit = oneUnitOnly ? 2 : 1;
+	
+	if (days > 2 || (!oneUnitOnly && days > 0)) {
+		if (oneUnitOnly) {
+			return "" + days + dayUnit;
+		} else {
+			return "" + days + dayUnit + separator + (hours % 24) + hourUnit;
+		}
+	}
+	else if (hours > 2) {
+		return "" + hours + hourUnit;
+	}
+	else if (minutes > 2) {
+		return "" + minutes + minuteUnit;
+	}
+	else {
+		return "" + seconds + secondUnit;
+	}
+}
+
 
 function parseStatFile(serverid, dataView) {	
 	let offset = 0;
@@ -608,6 +709,8 @@ function expand_server_row(serverid, redraw) {
 		} else {
 			fetch_graph(serverid);
 		}
+		
+		updatePlayerTable(serverid);
 	}
 }
 

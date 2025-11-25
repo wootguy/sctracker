@@ -97,6 +97,7 @@
 				background: none;
 				padding: 0;
 				border: 0;
+				position: relative;
 			}
 			.server-content-row {
 				display: none;
@@ -180,6 +181,68 @@
 			.flag {
 				width: 20px;
 				padding-top: 4px;
+			}
+			
+			.content .player-list-container {
+				width: 235px;
+				display: inline-block;
+				vertical-align: top;
+				position: absolute;
+				height: 173px;
+				right: 0;
+			}
+			.content .player-list {
+				width: 230px;
+				display: inline-block;
+				vertical-align: top;
+				overflow-y: scroll;
+				overflow-x: hidden;
+				height: 173px;
+				padding-top: 5px;
+			}
+			.server-content-row.expanded .player-list td {
+				height: auto;
+				padding: 1px 0;
+				font-size: 10px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.server-content-row.expanded .player-list th {
+				padding: 0;
+				color: #999;
+				font-size: 10px;
+			}
+			.content .player-list td:nth-child(1) {
+				width: 145px;
+				max-width: 145px;
+			}
+			.content .player-list td:nth-child(2) {
+				width: 30px;
+				max-width: 30px;
+			}
+			.content .player-list td:nth-child(3) {
+				width: 30px;
+				max-width: 30px;
+				text-align: right;
+			}
+			.content .player-list th:nth-child(3) {
+				text-align: right;
+			}
+			
+			.a2s-fail, .a2s-empty {
+				position: absolute;
+				right: 50%;
+				top: 50%;
+				transform: translate(50%, 0);
+				color: #aaa;
+				font-size: 20px;
+				font-weight: bold;
+				width: 200px;
+				text-align: center;
+			}
+			.a2s-fail {
+				color: #a00;
 			}
 			
 			#hover-tooltip {
@@ -323,6 +386,31 @@ Hover your mouse over a rank number to see its &quot;player hours&quot; stat, wh
 										<g class="chartg"></g>
 									</g>
 								</svg>
+								<div class="player-list-container">
+									<table class="player-list">
+										<thead class="player-table-header">
+											<th title="Player list reported by the server.
+
+This table may include bots, non-steam players, or entirely fake data. Leaving/joining players and map changes can temporarily desync this table with the Steam master server player count (top right number).
+
+The ranking system doesn't use this player count because server owners are actively faking it. The Steam master server player counter can't be faked without Steam account farms. I've only seen those used in Counter-Strike so far.
+
+If you see a server with '0 / 32' players while this table is full, then it's likely a fake/proxy server."
+											class="player-header">X Players + Y Bots</th>
+											<th title="Player's in-game score">Score</th>
+											<th title="Time spent on the server (current session, not total time)">Time</th>
+										</thead>
+										<tbody>
+											<tr class="player-row">
+												<td class="player-name">placeholder name</td>
+												<td class="player-score">2147483647</td>
+												<td class="player-time">10d</td>
+											</tr>
+										</tbody>
+									</table>
+									<div class="a2s-fail hidden" title="The server blocked A2S queries or failed to respond.">Query Failed</div>
+									<div class="a2s-empty hidden" title="The server is currently empty.">Server Empty</div>
+								</div>
 							</td>
 						</tr>
 						
