@@ -301,7 +301,8 @@ function renderGraph(serverid) {
 	var row = document.getElementsByClassName("server-content-row " + serverid)[0];
 	var chart = row.getElementsByClassName("chart")[0];
 	
-	var playerListWidth = 240;
+	var showPlayers = document.getElementById("show_players").checked;
+	var playerListWidth = showPlayers ? 240 : 0;
 	
 	var chartg = row.getElementsByClassName("chartg")[0];
 	var chartWidthPad = 30;
@@ -982,6 +983,20 @@ function update_game() {
 	load_server_list();
 }
 
+function toggle_players() {
+	var showPlayers = document.getElementById("show_players").checked;
+	
+	var table = document.getElementsByClassName("server-table")[0];
+	
+	if (!showPlayers) {
+		table.classList.add("no-players");
+	} else {
+		table.classList.remove("no-players");
+	}
+	
+	redraw_charts();
+}
+
 document.addEventListener("DOMContentLoaded",function() {
 	update_game();
 	
@@ -1004,4 +1019,9 @@ document.addEventListener("DOMContentLoaded",function() {
 	document.getElementById("game_selector").onchange = function() {
 		update_game();
 	};
+	document.getElementById("show_players").onchange = function() {
+		toggle_players();
+	};
+	
+	toggle_players();
 });

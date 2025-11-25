@@ -229,6 +229,9 @@
 			.content .player-list th:nth-child(3) {
 				text-align: right;
 			}
+			.no-players .player-list, .no-players .player-list-container {
+				display: none !important;
+			}
 			
 			.a2s-fail, .a2s-empty {
 				position: absolute;
@@ -243,6 +246,11 @@
 			}
 			.a2s-fail {
 				color: #a00;
+			}
+			
+			.show_players_container {
+				display: inline-block;
+				float: right;
 			}
 			
 			#hover-tooltip {
@@ -448,6 +456,10 @@ Selecting a time window longer than 1 month will average player count data to 1-
 					<span class="chart-time" minutes="1036800" title="2 year time window">2yr</span>
 					<span class="chart-time" minutes="2073600" title="4 year time window">4yr</span>
 					<!--<span class="chart-time" minutes="0" title="View entire stat history">All</span>-->
+				</div>
+				<div class="show_players_container">
+					<input type="checkbox" id="show_players" autocomplete="off">
+					<label for="show_players" title="Show player list in expanded server rows">Show player lists</label>
 				</div>
 				<!--
 				<div class="sma-controls">
